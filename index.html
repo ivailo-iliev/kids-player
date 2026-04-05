@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Kids Spotify Player</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="leftPanel" aria-label="Favorites panel">
+        <div id="tileGrid" role="listbox" aria-label="Favorite items"></div>
+        <div id="leftPanelNav">
+          <button id="navPrev" class="navButton" aria-label="Previous tile">&lt;</button>
+          <button id="navNext" class="navButton" aria-label="Next tile">&gt;</button>
+        </div>
+      </div>
+
+      <div id="rightPanel" aria-label="Now playing panel">
+        <div id="connectionRow">
+          <img id="connectionIcon" src="assets/icons/connecting.svg" alt="Connection status" />
+          <span id="connectionText">Connecting to Spotify...</span>
+        </div>
+
+        <img id="albumArt" src="assets/placeholders/album-placeholder.svg" alt="Current album art" />
+
+        <div id="controls" aria-label="Playback controls">
+          <button id="btnPrev" class="controlButton" aria-label="Previous song">
+            <img src="assets/icons/prev.svg" alt="Previous" />
+          </button>
+          <button id="btnPlayPause" class="controlButton" aria-label="Play pause">
+            <img id="playPauseIcon" src="assets/icons/play.svg" alt="Play" />
+          </button>
+          <button id="btnNext" class="controlButton" aria-label="Next song">
+            <img src="assets/icons/next.svg" alt="Next" />
+          </button>
+        </div>
+
+        <ul id="trackList" aria-label="Current playlist"></ul>
+      </div>
+    </div>
+
+    <script src="https://sdk.scdn.co/spotify-player.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
