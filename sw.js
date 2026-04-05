@@ -1,20 +1,5 @@
-const CACHE_NAME = 'kids-player-v1';
-const APP_SHELL = [
-  './',
-  './index.html',
-  './styles.css',
-  './app.js',
-  './manifest.json',
-  './assets/icons/play.svg',
-  './assets/icons/pause.svg',
-  './assets/icons/prev.svg',
-  './assets/icons/next.svg',
-  './assets/icons/connecting.svg',
-  './assets/icons/connected.svg',
-  './assets/icons/disconnected.svg',
-  './assets/placeholders/tile-placeholder.svg',
-  './assets/placeholders/album-placeholder.svg'
-];
+const CACHE_NAME = 'kids-player-v2';
+const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.json', './assets/icons/app-192.svg', './assets/icons/app-512.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
