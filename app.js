@@ -82,6 +82,7 @@ const GENRES_PLACEHOLDER =
   );
 
 const TILE_IMAGE_SIZE = 100;
+const TILE_IMAGE_DOWNLOAD_SIZE = 100;
 const ALBUM_ART_IMAGE_SIZE = 160;
 const IMAGE_CACHE_WARM_BATCH = 24;
 const MAX_RENDERED_TILES = 30;
@@ -366,11 +367,11 @@ function applyTileNodeState(img, tileIndex, tile, selected) {
   if (img.src !== nextSrc) {
     img.src = nextSrc;
   }
-  if (img.width !== tile.imageWidth) {
-    img.width = tile.imageWidth;
+  if (img.width !== TILE_IMAGE_SIZE) {
+    img.width = TILE_IMAGE_SIZE;
   }
-  if (img.height !== tile.imageHeight) {
-    img.height = tile.imageHeight;
+  if (img.height !== TILE_IMAGE_SIZE) {
+    img.height = TILE_IMAGE_SIZE;
   }
   if (img.alt !== tile.type) {
     img.alt = tile.type;
@@ -1037,7 +1038,7 @@ function normalizeTrack(track) {
 }
 
 function normalizeTileImage(images) {
-  return pickImageBySize(images, TILE_IMAGE_SIZE);
+  return pickImageBySize(images, TILE_IMAGE_DOWNLOAD_SIZE);
 }
 
 function normalizeAlbumArt(images) {
