@@ -9,6 +9,7 @@ const SPOTIFY = {
     'user-follow-read',
     'playlist-read-private',
     'playlist-read-collaborative',
+    'user-read-currently-playing',
     'user-read-playback-state',
     'user-modify-playback-state'
   ]
@@ -114,6 +115,9 @@ const state = {
   artistTrackCache: {},
   playSelectionRequestId: 0,
   healthcheckInFlight: false,
+  queueSyncInFlight: false,
+  queueSyncPending: false,
+  queueSyncCurrentTrack: null,
   renderedConnectionIconClass: '',
   renderedConnectionActive: false,
   renderedConnectionDetail: '',
@@ -265,10 +269,7 @@ async function playSelectedTile() {
   }
 
   if (tile.type === 'song') {
-    state.currentList = [tile.track];
-    state.currentIndex = 0;
-    state.currentSourceType = 'song';
-    await playTrackAtIndex(0);
+    await addTrackToQueue(tile.track);
     return;
   }
 
@@ -284,15 +285,6 @@ async function playSelectedTile() {
 
 async function onTrackStep(direction) {
   if (!canControlPlayback()) {
-    return;
-  }
-
-  if (state.currentSourceType === 'song') {
-    if (!state.currentList.length) {
-      return;
-    }
-    state.currentIndex = 0;
-    await playTrackAtIndex(0);
     return;
   }
 
@@ -451,9 +443,6 @@ function clearTrackList() {
 
 function updateTrackListFromPlayerState(sdkState) {
   const currentTrack = sdkState.track_window && sdkState.track_window.current_track;
-  const nextTracks = sdkState.track_window && sdkState.track_window.next_tracks
-    ? sdkState.track_window.next_tracks
-    : [];
 
   if (!currentTrack) {
     clearTrackList();
@@ -461,10 +450,8 @@ function updateTrackListFromPlayerState(sdkState) {
     return;
   }
 
-  state.currentList = [normalizePlayerTrack(currentTrack)].concat(nextTracks.map(normalizePlayerTrack));
-  state.currentIndex = 0;
   setStatusMessage(state.connectionDetail);
-  updateTrackList();
+  syncQueueState(normalizePlayerTrack(currentTrack));
 }
 
 function normalizePlayerTrack(track) {
@@ -493,6 +480,34 @@ function updateRenderedTrackText() {
       state.trackNodes[i].textContent = nextText;
     }
   }
+}
+
+async function syncQueueState(currentTrack) {
+  state.queueSyncCurrentTrack = currentTrack;
+
+  if (state.queueSyncInFlight) {
+    state.queueSyncPending = true;
+    return;
+  }
+
+  state.queueSyncInFlight = true;
+  try {
+    const queueData = await spotifyGet('/me/player/queue', { allowResourceErrors: true });
+    const queueTracks = queueData && queueData.queue ? queueData.queue.map(normalizeQueueTrack) : [];
+    state.currentList = [state.queueSyncCurrentTrack].concat(queueTracks);
+    state.currentIndex = 0;
+    updateTrackList();
+  } finally {
+    state.queueSyncInFlight = false;
+    if (state.queueSyncPending) {
+      state.queueSyncPending = false;
+      syncQueueState(state.queueSyncCurrentTrack);
+    }
+  }
+}
+
+function normalizeQueueTrack(track) {
+  return normalizePlayerTrack(track);
 }
 
 function setAlbumArtImage(image) {
@@ -886,6 +901,50 @@ async function playTrackAtIndex(index) {
     }
 
     updateTrackList();
+    return;
+  }
+}
+
+async function addTrackToQueue(track) {
+  if (!track || !track.uri || !state.deviceId) {
+    return;
+  }
+
+  const queuePath = '/me/player/queue?uri=' +
+    encodeURIComponent(track.uri) +
+    '&device_id=' +
+    encodeURIComponent(state.deviceId);
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch('https://api.spotify.com/v1' + queuePath, {
+      method: 'POST',
+      headers: spotifyHeaders(false)
+    });
+
+    if (response.status === 401) {
+      const tokenOk = await ensureValidToken(true);
+      if (tokenOk) {
+        continue;
+      }
+      transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
+      return;
+    }
+
+    if (isNonFatalSpotifyStatus(response.status)) {
+      setStatusMessage('Could not add this song to the queue');
+      return;
+    }
+
+    if (!response.ok) {
+      transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify queue request failed');
+      scheduleReconnect('Queue request failed');
+      return;
+    }
+
+    setStatusMessage('Song added to queue');
+    if (state.currentList.length) {
+      syncQueueState(state.currentList[0]);
+    }
     return;
   }
 }
