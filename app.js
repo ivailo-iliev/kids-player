@@ -81,7 +81,8 @@ const GENRES_PLACEHOLDER =
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'><rect width='320' height='320' fill='#1f1f1f'/><circle cx='160' cy='160' r='112' fill='#111'/><path fill='#9e9e9e' d='M162 216c12-12 12-29 12-48v-86h37v-24h-55v78c-4-2-9-4-13-4-17 0-30 12-30 30s13 30 30 30c17 0 30-13 30-30zm-2 67c-28 0-53-11-73-30-19-20-30-45-30-73s11-53 30-73c20-19 45-30 73-30s53 11 73 30c19 20 30 45 30 73s-11 53-30 73c-20 19-45 30-73 30z'/></svg>"
   );
 
-const IMAGE_SIZE = 160;
+const TILE_IMAGE_SIZE = 100;
+const ALBUM_ART_IMAGE_SIZE = 160;
 const IMAGE_CACHE_WARM_BATCH = 24;
 const MAX_RENDERED_TILES = 30;
 const MAX_RENDERED_TRACKS = 40;
@@ -140,7 +141,7 @@ async function init() {
   }
 
   bindUiEvents();
-  setAlbumArtImage(createFallbackImage(IMAGE_SIZE));
+  setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
 
@@ -334,8 +335,8 @@ function renderTiles() {
     visibleIndices.forEach((tileIndex) => {
       const tile = state.favoritesTiles[tileIndex];
       const img = document.createElement('img');
-      img.width = IMAGE_SIZE;
-      img.height = IMAGE_SIZE;
+      img.width = TILE_IMAGE_SIZE;
+      img.height = TILE_IMAGE_SIZE;
       img.decoding = 'async';
       img.setAttribute('role', 'option');
       applyTileNodeState(img, tileIndex, tile, tileIndex === state.selectedTileIndex);
@@ -434,10 +435,11 @@ function updateTrackList() {
     ui.trackList.appendChild(fragment);
   } else {
     updateRenderedTrackSelection();
+    updateRenderedTrackText();
   }
 
   const current = state.currentList[state.currentIndex];
-  setAlbumArtImage(current ? trackToAlbumArtImage(current) : createFallbackImage(IMAGE_SIZE));
+  setAlbumArtImage(current ? trackToAlbumArtImage(current) : createFallbackImage(ALBUM_ART_IMAGE_SIZE));
 }
 
 function clearTrackList() {
@@ -454,7 +456,7 @@ function updateTrackListFromPlayerState(sdkState) {
 
   if (!currentTrack) {
     clearTrackList();
-    setAlbumArtImage(createFallbackImage(IMAGE_SIZE));
+    setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
     return;
   }
 
@@ -479,6 +481,16 @@ function updateRenderedTrackSelection() {
   for (let i = 0; i < state.trackNodes.length; i += 1) {
     const trackIndex = state.trackNodeIndices[i];
     state.trackNodes[i].classList.toggle('nowPlaying', trackIndex === state.currentIndex);
+  }
+}
+
+function updateRenderedTrackText() {
+  for (let i = 0; i < state.trackNodes.length; i += 1) {
+    const trackIndex = state.trackNodeIndices[i];
+    const nextText = state.currentList[trackIndex] ? state.currentList[trackIndex].name : '';
+    if (state.trackNodes[i].textContent !== nextText) {
+      state.trackNodes[i].textContent = nextText;
+    }
   }
 }
 
@@ -948,10 +960,10 @@ async function fetchArtistTracks(artistId) {
   const fetchTasks = albums.map(async (album) => {
     const tracksData = await spotifyGet('/albums/' + album.id + '/tracks?limit=50', { allowResourceErrors: true });
     if (!tracksData) {
-      return { tracks: [], image: normalizeImage(album.images) };
+      return { tracks: [], image: normalizeAlbumArt(album.images) };
     }
     const tracks = tracksData.items || [];
-    const image = normalizeImage(album.images);
+    const image = normalizeAlbumArt(album.images);
     return { tracks, image };
   });
 
@@ -998,7 +1010,7 @@ async function playContextUri(contextUri) {
 
     if (isNonFatalSpotifyStatus(response.status)) {
       clearTrackList();
-  setAlbumArtImage(createFallbackImage(IMAGE_SIZE));
+      setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
       setStatusMessage('This item is unavailable for the current Spotify account');
       return;
     }
@@ -1014,7 +1026,7 @@ async function playContextUri(contextUri) {
 }
 
 function normalizeTrack(track) {
-  const image = normalizeImage(track.album && track.album.images);
+  const image = normalizeAlbumArt(track.album && track.album.images);
   return {
     uri: track.uri,
     name: track.name,
@@ -1025,15 +1037,11 @@ function normalizeTrack(track) {
 }
 
 function normalizeTileImage(images) {
-  return normalizeImage(images);
+  return pickImageBySize(images, TILE_IMAGE_SIZE);
 }
 
 function normalizeAlbumArt(images) {
-  return normalizeImage(images);
-}
-
-function normalizeImage(images) {
-  return pickImageBySize(images, IMAGE_SIZE);
+  return pickImageBySize(images, ALBUM_ART_IMAGE_SIZE);
 }
 
 function pickImageBySize(images, preferredSize) {
@@ -1081,16 +1089,16 @@ function createFallbackImage(size) {
 function tileToAlbumArtImage(tile) {
   return {
     url: tile.image || GENRES_PLACEHOLDER,
-    width: tile.imageWidth || IMAGE_SIZE,
-    height: tile.imageHeight || IMAGE_SIZE
+    width: tile.imageWidth || ALBUM_ART_IMAGE_SIZE,
+    height: tile.imageHeight || ALBUM_ART_IMAGE_SIZE
   };
 }
 
 function trackToAlbumArtImage(track) {
   return {
     url: track.image || GENRES_PLACEHOLDER,
-    width: track.imageWidth || IMAGE_SIZE,
-    height: track.imageHeight || IMAGE_SIZE
+    width: track.imageWidth || ALBUM_ART_IMAGE_SIZE,
+    height: track.imageHeight || ALBUM_ART_IMAGE_SIZE
   };
 }
 

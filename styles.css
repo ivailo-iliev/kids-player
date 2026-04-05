@@ -72,23 +72,30 @@ body {
 }
 
 #tileGrid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  font-size: 0;
+  line-height: 0;
   padding-bottom: 56px;
 }
 
 .tile {
-  width: 100%;
-  aspect-ratio: 1;
+  margin: 0 6px 6px 0;
   border: 2px solid transparent;
   border-radius: 8px;
   object-fit: cover;
   background: var(--panel-bg);
+  vertical-align: top;
 }
 
 .tile.selected {
   border-color: var(--accent);
+}
+
+#tileGrid .tile:nth-child(6n) {
+  margin-right: 0;
+}
+
+#tileGrid .tile:nth-last-child(-n + 6) {
+  margin-bottom: 0;
 }
 
 #leftPanelNav {
@@ -129,8 +136,8 @@ body {
 }
 
 #albumArt {
-  width: 180px;
-  height: 180px;
+  width: 160px;
+  height: 160px;
   object-fit: cover;
   border-radius: 8px;
   background: var(--panel-bg);
