@@ -65,15 +65,21 @@ const ALLOWED_CONNECTION_TRANSITIONS = {
   ]
 };
 
-const STATUS_ICONS = {
-  [CONNECTION_STATES.INIT]: 'assets/icons/connecting.svg',
-  [CONNECTION_STATES.AUTHORIZING]: 'assets/icons/connecting.svg',
-  [CONNECTION_STATES.CONNECTING]: 'assets/icons/connecting.svg',
-  [CONNECTION_STATES.CONNECTED]: 'assets/icons/connected.svg',
-  [CONNECTION_STATES.DISCONNECTED]: 'assets/icons/disconnected.svg',
-  [CONNECTION_STATES.TOKEN_EXPIRED]: 'assets/icons/disconnected.svg',
-  [CONNECTION_STATES.ERROR]: 'assets/icons/disconnected.svg'
+const STATUS_ICON_CLASSES = {
+  [CONNECTION_STATES.INIT]: 'icon-connecting',
+  [CONNECTION_STATES.AUTHORIZING]: 'icon-connecting',
+  [CONNECTION_STATES.CONNECTING]: 'icon-connecting',
+  [CONNECTION_STATES.CONNECTED]: 'icon-connected',
+  [CONNECTION_STATES.DISCONNECTED]: 'icon-disconnected',
+  [CONNECTION_STATES.TOKEN_EXPIRED]: 'icon-disconnected',
+  [CONNECTION_STATES.ERROR]: 'icon-disconnected'
 };
+
+const GENRES_PLACEHOLDER =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'><rect width='320' height='320' fill='#1f1f1f'/><circle cx='160' cy='160' r='112' fill='#111'/><path fill='#9e9e9e' d='M162 216c12-12 12-29 12-48v-86h37v-24h-55v78c-4-2-9-4-13-4-17 0-30 12-30 30s13 30 30 30c17 0 30-13 30-30zm-2 67c-28 0-53-11-73-30-19-20-30-45-30-73s11-53 30-73c20-19 45-30 73-30s53 11 73 30c19 20 30 45 30 73s-11 53-30 73c-20 19-45 30-73 30z'/></svg>"
+  );
 
 const state = {
   accessToken: null,
@@ -114,6 +120,8 @@ async function init() {
   }
 
   bindUiEvents();
+  ui.albumArt.src = GENRES_PLACEHOLDER;
+  ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
 
   await loadTokensFromStorage();
@@ -270,7 +278,7 @@ function renderTiles() {
   state.favoritesTiles.forEach((tile, index) => {
     const img = document.createElement('img');
     img.className = 'tile' + (index === state.selectedTileIndex ? ' selected' : '');
-    img.src = tile.image || 'assets/placeholders/tile-placeholder.svg';
+    img.src = tile.image || GENRES_PLACEHOLDER;
     img.alt = tile.type;
     img.setAttribute('role', 'option');
     img.setAttribute('aria-selected', index === state.selectedTileIndex ? 'true' : 'false');
@@ -298,9 +306,7 @@ function updateTrackList() {
   });
 
   const current = state.currentList[state.currentIndex];
-  if (current && current.image) {
-    ui.albumArt.src = current.image;
-  }
+  ui.albumArt.src = current && current.image ? current.image : GENRES_PLACEHOLDER;
 }
 
 function transitionConnection(nextState, detail) {
@@ -324,7 +330,9 @@ function transitionConnection(nextState, detail) {
 }
 
 function updateConnectionUi() {
-  ui.connectionIcon.src = STATUS_ICONS[state.connection] || STATUS_ICONS[CONNECTION_STATES.DISCONNECTED];
+  const iconClass = STATUS_ICON_CLASSES[state.connection] || STATUS_ICON_CLASSES[CONNECTION_STATES.DISCONNECTED];
+  ui.connectionIcon.className = 'icon ' + iconClass;
+  ui.connectionIcon.classList.toggle('is-active', state.connection === CONNECTION_STATES.CONNECTED);
   ui.connectionText.textContent = state.connectionDetail;
 
   const disableControls = state.connection !== CONNECTION_STATES.CONNECTED;
@@ -487,7 +495,8 @@ async function initSpotifyPlayer() {
     }
 
     state.isPlaying = !sdkState.paused;
-    ui.playPauseIcon.src = state.isPlaying ? 'assets/icons/pause.svg' : 'assets/icons/play.svg';
+    ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
+    ui.btnPlayPause.classList.toggle('is-active', state.isPlaying);
   });
 
   await state.player.connect();
@@ -607,7 +616,7 @@ function normalizeTrack(track) {
 }
 
 function getImage(images) {
-  return images && images.length ? images[0].url : 'assets/placeholders/tile-placeholder.svg';
+  return images && images.length ? images[0].url : GENRES_PLACEHOLDER;
 }
 
 async function spotifyGet(path) {

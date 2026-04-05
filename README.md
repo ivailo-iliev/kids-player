@@ -25,6 +25,8 @@ python3 -m http.server 8080
 - Left panel navigation wraps to first tile after the end.
 - Connection state machine handles authorizing/connecting/connected/disconnected/token-expired states, disables controls while disconnected, and auto-retries with backoff.
 
-## Icon placeholders
+## Icons and placeholders
 
-`assets/icons/*.svg` are placeholder SVG files. Replace them with your selected Google icon exports.
+Google Material icon SVG paths are embedded into `styles.css` and tinted by CSS theme colors for active/inactive states.
+
+Tile and album placeholders use the Genres icon generated in `app.js`, and PWA app icons (`assets/icons/app-192.svg`, `assets/icons/app-512.svg`) are genres-based.

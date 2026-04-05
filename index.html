@@ -13,28 +13,32 @@
       <div id="leftPanel" aria-label="Favorites panel">
         <div id="tileGrid" role="listbox" aria-label="Favorite items"></div>
         <div id="leftPanelNav">
-          <button id="navPrev" class="navButton" aria-label="Previous tile">&lt;</button>
-          <button id="navNext" class="navButton" aria-label="Next tile">&gt;</button>
+          <button id="navPrev" class="navButton" aria-label="Previous tile">
+            <span class="icon icon-arrow-back" aria-hidden="true"></span>
+          </button>
+          <button id="navNext" class="navButton" aria-label="Next tile">
+            <span class="icon icon-arrow-forward" aria-hidden="true"></span>
+          </button>
         </div>
       </div>
 
       <div id="rightPanel" aria-label="Now playing panel">
         <div id="connectionRow">
-          <img id="connectionIcon" src="assets/icons/connecting.svg" alt="Connection status" />
+          <span id="connectionIcon" class="icon icon-connecting" aria-hidden="true"></span>
           <span id="connectionText">Connecting to Spotify...</span>
         </div>
 
-        <img id="albumArt" src="assets/placeholders/album-placeholder.svg" alt="Current album art" />
+        <img id="albumArt" alt="Current album art" />
 
         <div id="controls" aria-label="Playback controls">
           <button id="btnPrev" class="controlButton" aria-label="Previous song">
-            <img src="assets/icons/prev.svg" alt="Previous" />
+            <span class="icon icon-skip-previous" aria-hidden="true"></span>
           </button>
           <button id="btnPlayPause" class="controlButton" aria-label="Play pause">
-            <img id="playPauseIcon" src="assets/icons/play.svg" alt="Play" />
+            <span id="playPauseIcon" class="icon icon-play-circle" aria-hidden="true"></span>
           </button>
           <button id="btnNext" class="controlButton" aria-label="Next song">
-            <img src="assets/icons/next.svg" alt="Next" />
+            <span class="icon icon-skip-next" aria-hidden="true"></span>
           </button>
         </div>
 
