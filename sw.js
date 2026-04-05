@@ -22,6 +22,12 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+  const isHttpRequest = url.protocol === 'http:' || url.protocol === 'https:';
+
+  if (!isHttpRequest || event.request.method !== 'GET') {
+    return;
+  }
+
   const isImageRequest = event.request.destination === 'image';
   const isSpotifyImage = url.hostname.indexOf('scdn.co') !== -1 || url.hostname.indexOf('spotifycdn.com') !== -1;
 
@@ -34,7 +40,7 @@ self.addEventListener('fetch', (event) => {
         }
 
         const response = await fetch(event.request);
-        if (response && (response.ok || response.type === 'opaque')) {
+        if (response && response.ok) {
           cache.put(event.request, response.clone());
         }
         return response;
