@@ -9,7 +9,7 @@
 [[headers]]
   for = "/*"
   [headers.values]
-    Content-Security-Policy = "default-src 'self'; script-src 'self' https://sdk.scdn.co; connect-src 'self' https://sdk.scdn.co https://api.spotify.com https://accounts.spotify.com https://*.spotify.com wss://*.spotify.com; img-src 'self' data: blob: https://*.scdn.co https://*.spotifycdn.com; style-src 'self'; font-src 'self'; media-src blob: https://*.scdn.co https://*.spotifycdn.com https://*.spotify.com; worker-src 'self' blob:; frame-src https://sdk.scdn.co https://*.spotify.com; form-action 'self' https://accounts.spotify.com; base-uri 'self'; frame-ancestors 'none'; manifest-src 'self'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' https://sdk.scdn.co; connect-src 'self' https://sdk.scdn.co https://api.spotify.com https://accounts.spotify.com https://apresolve.spotify.com https://spclient.wg.spotify.com https://*.spotify.com https://*.scdn.co https://*.spotifycdn.com wss://*.spotify.com; img-src 'self' data: blob: https://*.scdn.co https://*.spotifycdn.com; style-src 'self'; font-src 'self'; media-src blob: https://*.scdn.co https://*.spotifycdn.com https://*.spotify.com; worker-src 'self' blob:; frame-src https://sdk.scdn.co https://*.spotify.com; form-action 'self' https://accounts.spotify.com; base-uri 'self'; frame-ancestors 'none'; manifest-src 'self'"
     Referrer-Policy = "strict-origin-when-cross-origin"
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
