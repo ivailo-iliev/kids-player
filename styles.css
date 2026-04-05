@@ -62,13 +62,13 @@ body {
 
 #leftPanel {
   left: 0;
-  width: 62%;
+  width: 651px;
   border-right: 1px solid var(--panel-border);
 }
 
 #rightPanel {
   right: 0;
-  width: 38%;
+  width: 373px;
 }
 
 #tileGrid {
