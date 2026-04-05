@@ -81,8 +81,7 @@ const GENRES_PLACEHOLDER =
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'><rect width='320' height='320' fill='#1f1f1f'/><circle cx='160' cy='160' r='112' fill='#111'/><path fill='#9e9e9e' d='M162 216c12-12 12-29 12-48v-86h37v-24h-55v78c-4-2-9-4-13-4-17 0-30 12-30 30s13 30 30 30c17 0 30-13 30-30zm-2 67c-28 0-53-11-73-30-19-20-30-45-30-73s11-53 30-73c20-19 45-30 73-30s53 11 73 30c19 20 30 45 30 73s-11 53-30 73c-20 19-45 30-73 30z'/></svg>"
   );
 
-const TILE_IMAGE_SIZE = 160;
-const ALBUM_ART_SIZE = 180;
+const IMAGE_SIZE = 160;
 const IMAGE_CACHE_WARM_BATCH = 24;
 const MAX_RENDERED_TILES = 30;
 const MAX_RENDERED_TRACKS = 40;
@@ -141,7 +140,7 @@ async function init() {
   }
 
   bindUiEvents();
-  ui.albumArt.src = GENRES_PLACEHOLDER;
+  setAlbumArtImage(createFallbackImage(IMAGE_SIZE));
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
 
@@ -258,7 +257,6 @@ async function playSelectedTile() {
     return;
   }
 
-  const requestId = ++state.playSelectionRequestId;
   const tile = state.favoritesTiles[state.selectedTileIndex];
   if (!tile) {
     return;
@@ -268,46 +266,44 @@ async function playSelectedTile() {
     state.currentList = [tile.track];
     state.currentIndex = 0;
     state.currentSourceType = 'song';
-  } else if (tile.type === 'playlist' || tile.type === 'album') {
-    state.currentList = await fetchContextTracks(tile.type, tile.id);
-    state.currentIndex = 0;
-    state.currentSourceType = tile.type;
-  } else if (tile.type === 'artist') {
-    state.currentList = await fetchArtistTracks(tile.id);
-    state.currentIndex = 0;
-    state.currentSourceType = 'artist';
-  }
-
-  if (requestId !== state.playSelectionRequestId) {
+    await playTrackAtIndex(0);
     return;
   }
 
-  if (!state.currentList.length) {
-    clearTrackList();
-    setAlbumArtSrc(GENRES_PLACEHOLDER);
-    if (tile.type !== 'song') {
-      setStatusMessage('This item is unavailable for the current Spotify account');
-    }
-    return;
-  }
+  state.playSelectionRequestId += 1;
+  state.currentList = [];
+  state.currentIndex = 0;
+  state.currentSourceType = tile.type;
+  clearTrackList();
+  setAlbumArtImage(tileToAlbumArtImage(tile));
 
-  await playTrackAtIndex(0);
+  await playContextUri('spotify:' + tile.type + ':' + tile.id);
 }
 
 async function onTrackStep(direction) {
-  if (!canControlPlayback() || !state.currentList.length) {
+  if (!canControlPlayback()) {
     return;
   }
 
   if (state.currentSourceType === 'song') {
+    if (!state.currentList.length) {
+      return;
+    }
     state.currentIndex = 0;
     await playTrackAtIndex(0);
     return;
   }
 
-  const count = state.currentList.length;
-  state.currentIndex = ((state.currentIndex + direction) % count + count) % count;
-  await playTrackAtIndex(state.currentIndex);
+  try {
+    if (direction < 0) {
+      await state.player.previousTrack();
+    } else {
+      await state.player.nextTrack();
+    }
+  } catch (error) {
+    transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Playback device unavailable');
+    scheduleReconnect('Track step failed');
+  }
 }
 
 async function onTogglePlayPause() {
@@ -338,8 +334,8 @@ function renderTiles() {
     visibleIndices.forEach((tileIndex) => {
       const tile = state.favoritesTiles[tileIndex];
       const img = document.createElement('img');
-      img.width = TILE_IMAGE_SIZE;
-      img.height = TILE_IMAGE_SIZE;
+      img.width = IMAGE_SIZE;
+      img.height = IMAGE_SIZE;
       img.decoding = 'async';
       img.setAttribute('role', 'option');
       applyTileNodeState(img, tileIndex, tile, tileIndex === state.selectedTileIndex);
@@ -368,6 +364,12 @@ function applyTileNodeState(img, tileIndex, tile, selected) {
   }
   if (img.src !== nextSrc) {
     img.src = nextSrc;
+  }
+  if (img.width !== tile.imageWidth) {
+    img.width = tile.imageWidth;
+  }
+  if (img.height !== tile.imageHeight) {
+    img.height = tile.imageHeight;
   }
   if (img.alt !== tile.type) {
     img.alt = tile.type;
@@ -435,13 +437,42 @@ function updateTrackList() {
   }
 
   const current = state.currentList[state.currentIndex];
-  setAlbumArtSrc(current && current.image ? current.image : GENRES_PLACEHOLDER);
+  setAlbumArtImage(current ? trackToAlbumArtImage(current) : createFallbackImage(IMAGE_SIZE));
 }
 
 function clearTrackList() {
   state.trackNodes = [];
   state.trackNodeIndices = [];
   ui.trackList.innerHTML = '';
+}
+
+function updateTrackListFromPlayerState(sdkState) {
+  const currentTrack = sdkState.track_window && sdkState.track_window.current_track;
+  const nextTracks = sdkState.track_window && sdkState.track_window.next_tracks
+    ? sdkState.track_window.next_tracks
+    : [];
+
+  if (!currentTrack) {
+    clearTrackList();
+    setAlbumArtImage(createFallbackImage(IMAGE_SIZE));
+    return;
+  }
+
+  state.currentList = [normalizePlayerTrack(currentTrack)].concat(nextTracks.map(normalizePlayerTrack));
+  state.currentIndex = 0;
+  setStatusMessage(state.connectionDetail);
+  updateTrackList();
+}
+
+function normalizePlayerTrack(track) {
+  const image = normalizeAlbumArt(track.album && track.album.images);
+  return {
+    uri: track.uri,
+    name: track.name,
+    image: image.url,
+    imageWidth: image.width,
+    imageHeight: image.height
+  };
 }
 
 function updateRenderedTrackSelection() {
@@ -451,13 +482,15 @@ function updateRenderedTrackSelection() {
   }
 }
 
-function setAlbumArtSrc(src) {
-  if (state.renderedAlbumArtSrc === src) {
+function setAlbumArtImage(image) {
+  if (state.renderedAlbumArtSrc === image.url) {
     return;
   }
 
-  ui.albumArt.src = src;
-  state.renderedAlbumArtSrc = src;
+  ui.albumArt.src = image.url;
+  ui.albumArt.width = image.width;
+  ui.albumArt.height = image.height;
+  state.renderedAlbumArtSrc = image.url;
 }
 
 function setStatusMessage(message) {
@@ -686,27 +719,47 @@ async function runHealthcheckOnce() {
 }
 
 async function loadFavorites() {
-  const likedSongsMapper = (item) => ({
+  const likedSongsMapper = (item) => {
+    const image = normalizeTileImage(item.track.album.images);
+    return ({
       type: 'song',
       id: item.track.id,
-      image: normalizeTileImage(item.track.album.images),
+      image: image.url,
+      imageWidth: image.width,
+      imageHeight: image.height,
       track: normalizeTrack(item.track)
     });
-  const playlistsMapper = (item) => ({
+  };
+  const playlistsMapper = (item) => {
+    const image = normalizeTileImage(item.images);
+    return ({
       type: 'playlist',
       id: item.id,
-      image: normalizeTileImage(item.images)
+      image: image.url,
+      imageWidth: image.width,
+      imageHeight: image.height
     });
-  const artistsMapper = (item) => ({
+  };
+  const artistsMapper = (item) => {
+    const image = normalizeTileImage(item.images);
+    return ({
       type: 'artist',
       id: item.id,
-      image: normalizeTileImage(item.images)
+      image: image.url,
+      imageWidth: image.width,
+      imageHeight: image.height
     });
-  const albumsMapper = (item) => ({
+  };
+  const albumsMapper = (item) => {
+    const image = normalizeTileImage(item.album.images);
+    return ({
       type: 'album',
       id: item.album.id,
-      image: normalizeTileImage(item.album.images)
+      image: image.url,
+      imageWidth: image.width,
+      imageHeight: image.height
     });
+  };
 
   const [likedSongsPage, playlistsPage, artistsPage, albumsPage] = await Promise.all([
     fetchFirstPage('/me/tracks?limit=50', likedSongsMapper, false),
@@ -768,6 +821,7 @@ async function initSpotifyPlayer() {
     state.isPlaying = !sdkState.paused;
     ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
     ui.btnPlayPause.classList.toggle('is-active', state.isPlaying);
+    updateTrackListFromPlayerState(sdkState);
   });
 
   await state.player.connect();
@@ -858,7 +912,9 @@ async function fetchContextTracks(type, id) {
     .map((track) => ({
       uri: track.uri,
       name: track.name,
-      image
+      image: image.url,
+      imageWidth: image.width,
+      imageHeight: image.height
     }));
   state.contextTrackCache[cacheKey] = tracks;
   return tracks;
@@ -892,10 +948,10 @@ async function fetchArtistTracks(artistId) {
   const fetchTasks = albums.map(async (album) => {
     const tracksData = await spotifyGet('/albums/' + album.id + '/tracks?limit=50', { allowResourceErrors: true });
     if (!tracksData) {
-      return { tracks: [], image: normalizeAlbumArt(album.images) };
+      return { tracks: [], image: normalizeImage(album.images) };
     }
     const tracks = tracksData.items || [];
-    const image = normalizeAlbumArt(album.images);
+    const image = normalizeImage(album.images);
     return { tracks, image };
   });
 
@@ -906,7 +962,9 @@ async function fetchArtistTracks(artistId) {
         trackMap[track.id] = {
           uri: track.uri,
           name: track.name,
-          image
+          image: image.url,
+          imageWidth: image.width,
+          imageHeight: image.height
         };
       }
     });
@@ -917,41 +975,123 @@ async function fetchArtistTracks(artistId) {
   return tracks;
 }
 
+async function playContextUri(contextUri) {
+  const body = JSON.stringify({
+    context_uri: contextUri
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch('https://api.spotify.com/v1/me/player/play?device_id=' + encodeURIComponent(state.deviceId), {
+      method: 'PUT',
+      headers: spotifyHeaders(true),
+      body
+    });
+
+    if (response.status === 401) {
+      const tokenOk = await ensureValidToken(true);
+      if (tokenOk) {
+        continue;
+      }
+      transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
+      return;
+    }
+
+    if (isNonFatalSpotifyStatus(response.status)) {
+      clearTrackList();
+  setAlbumArtImage(createFallbackImage(IMAGE_SIZE));
+      setStatusMessage('This item is unavailable for the current Spotify account');
+      return;
+    }
+
+    if (!response.ok) {
+      transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify play request failed');
+      scheduleReconnect('Play request failed');
+      return;
+    }
+
+    return;
+  }
+}
+
 function normalizeTrack(track) {
+  const image = normalizeImage(track.album && track.album.images);
   return {
     uri: track.uri,
     name: track.name,
-    image: normalizeAlbumArt(track.album && track.album.images)
+    image: image.url,
+    imageWidth: image.width,
+    imageHeight: image.height
   };
 }
 
 function normalizeTileImage(images) {
-  return pickImageBySize(images, TILE_IMAGE_SIZE);
+  return normalizeImage(images);
 }
 
 function normalizeAlbumArt(images) {
-  return pickImageBySize(images, ALBUM_ART_SIZE);
+  return normalizeImage(images);
+}
+
+function normalizeImage(images) {
+  return pickImageBySize(images, IMAGE_SIZE);
 }
 
 function pickImageBySize(images, preferredSize) {
   if (!images || !images.length) {
-    return GENRES_PLACEHOLDER;
+    return createFallbackImage(preferredSize);
   }
 
-  let best = images[0];
-  let bestScore = Number.MAX_VALUE;
+  let best = null;
 
   for (let i = 0; i < images.length; i += 1) {
     const image = images[i];
     const candidateSize = image.width || image.height || preferredSize;
-    const score = Math.abs(candidateSize - preferredSize);
-    if (score < bestScore) {
+    if (candidateSize >= preferredSize && (!best || candidateSize < (best.width || best.height || preferredSize))) {
       best = image;
-      bestScore = score;
     }
   }
 
-  return best.url;
+  if (!best) {
+    best = images[0];
+    for (let i = 1; i < images.length; i += 1) {
+      const image = images[i];
+      const candidateSize = image.width || image.height || preferredSize;
+      const bestSize = best.width || best.height || preferredSize;
+      if (candidateSize > bestSize) {
+        best = image;
+      }
+    }
+  }
+
+  return {
+    url: best.url,
+    width: best.width || preferredSize,
+    height: best.height || preferredSize
+  };
+}
+
+function createFallbackImage(size) {
+  return {
+    url: GENRES_PLACEHOLDER,
+    width: size,
+    height: size
+  };
+}
+
+function tileToAlbumArtImage(tile) {
+  return {
+    url: tile.image || GENRES_PLACEHOLDER,
+    width: tile.imageWidth || IMAGE_SIZE,
+    height: tile.imageHeight || IMAGE_SIZE
+  };
+}
+
+function trackToAlbumArtImage(track) {
+  return {
+    url: track.image || GENRES_PLACEHOLDER,
+    width: track.imageWidth || IMAGE_SIZE,
+    height: track.imageHeight || IMAGE_SIZE
+  };
 }
 
 function isNonFatalSpotifyStatus(status) {
