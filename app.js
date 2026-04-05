@@ -93,6 +93,7 @@ const state = {
   expiresAt: 0,
   player: null,
   deviceId: null,
+  market: 'US',
   isPlaying: false,
   connection: CONNECTION_STATES.INIT,
   connectionDetail: 'Starting...',
@@ -116,7 +117,8 @@ const state = {
   renderedConnectionActive: false,
   renderedConnectionDetail: '',
   renderedControlsDisabled: null,
-  renderedAlbumArtSrc: ''
+  renderedAlbumArtSrc: '',
+  renderedStatusMessage: ''
 };
 
 const ui = {
@@ -158,6 +160,7 @@ async function init() {
     return;
   }
 
+  await loadUserMarket();
   transitionConnection(CONNECTION_STATES.CONNECTING, 'Connecting to Spotify...');
   await initSpotifyPlayer();
 
@@ -282,6 +285,9 @@ async function playSelectedTile() {
   if (!state.currentList.length) {
     clearTrackList();
     setAlbumArtSrc(GENRES_PLACEHOLDER);
+    if (tile.type !== 'song') {
+      setStatusMessage('This item is unavailable for the current Spotify account');
+    }
     return;
   }
 
@@ -454,6 +460,15 @@ function setAlbumArtSrc(src) {
   state.renderedAlbumArtSrc = src;
 }
 
+function setStatusMessage(message) {
+  if (state.renderedStatusMessage === message) {
+    return;
+  }
+
+  ui.connectionText.textContent = message;
+  state.renderedStatusMessage = message;
+}
+
 function scheduleImageWarmCache(tiles) {
   const tileSource = tiles || state.favoritesTiles;
   if (!tileSource.length) {
@@ -555,6 +570,7 @@ function updateConnectionUi() {
   if (state.renderedConnectionDetail !== state.connectionDetail) {
     ui.connectionText.textContent = state.connectionDetail;
     state.renderedConnectionDetail = state.connectionDetail;
+    state.renderedStatusMessage = state.connectionDetail;
   }
 
   if (state.renderedControlsDisabled !== disableControls) {
@@ -817,7 +833,10 @@ async function fetchContextTracks(type, id) {
     ? '/playlists/' + id + '/tracks?limit=100'
     : '/albums/' + id + '/tracks?limit=50';
 
-  const data = await spotifyGet(endpoint);
+  const data = await spotifyGet(endpoint, { allowResourceErrors: true });
+  if (!data) {
+    return [];
+  }
   const items = data.items || [];
 
   if (type === 'playlist') {
@@ -828,7 +847,10 @@ async function fetchContextTracks(type, id) {
     return tracks;
   }
 
-  const album = await spotifyGet('/albums/' + id);
+  const album = await spotifyGet('/albums/' + id, { allowResourceErrors: true });
+  if (!album) {
+    return [];
+  }
   const image = normalizeAlbumArt(album.images);
 
   const tracks = items
@@ -847,18 +869,31 @@ async function fetchArtistTracks(artistId) {
     return state.artistTrackCache[artistId];
   }
 
-  const top = await spotifyGet('/artists/' + artistId + '/top-tracks?market=from_token');
+  const top = await spotifyGet('/artists/' + artistId + '/top-tracks?market=' + encodeURIComponent(state.market), {
+    allowResourceErrors: true
+  });
+  if (!top) {
+    return [];
+  }
   const topTracks = (top.tracks || []).map(normalizeTrack);
   if (topTracks.length) {
     state.artistTrackCache[artistId] = topTracks;
     return topTracks;
   }
 
-  const albumsData = await spotifyGet('/artists/' + artistId + '/albums?include_groups=album,single&limit=50');
+  const albumsData = await spotifyGet('/artists/' + artistId + '/albums?include_groups=album,single&limit=50', {
+    allowResourceErrors: true
+  });
+  if (!albumsData) {
+    return [];
+  }
   const albums = albumsData.items || [];
   const trackMap = {};
   const fetchTasks = albums.map(async (album) => {
-    const tracksData = await spotifyGet('/albums/' + album.id + '/tracks?limit=50');
+    const tracksData = await spotifyGet('/albums/' + album.id + '/tracks?limit=50', { allowResourceErrors: true });
+    if (!tracksData) {
+      return { tracks: [], image: normalizeAlbumArt(album.images) };
+    }
     const tracks = tracksData.items || [];
     const image = normalizeAlbumArt(album.images);
     return { tracks, image };
@@ -919,7 +954,13 @@ function pickImageBySize(images, preferredSize) {
   return best.url;
 }
 
-async function spotifyGet(path) {
+function isNonFatalSpotifyStatus(status) {
+  return status === 400 || status === 403 || status === 404;
+}
+
+async function spotifyGet(path, options) {
+  const allowResourceErrors = options && options.allowResourceErrors;
+
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await fetch('https://api.spotify.com/v1' + path, {
       headers: spotifyHeaders(false)
@@ -932,6 +973,10 @@ async function spotifyGet(path) {
       }
       transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
       return {};
+    }
+
+    if (allowResourceErrors && isNonFatalSpotifyStatus(response.status)) {
+      return null;
     }
 
     if (!response.ok) {
@@ -961,6 +1006,13 @@ function tokenRequestHeaders() {
   return {
     'Content-Type': 'application/x-www-form-urlencoded'
   };
+}
+
+async function loadUserMarket() {
+  const profile = await spotifyGet('/me', { allowResourceErrors: true });
+  if (profile && profile.country) {
+    state.market = profile.country;
+  }
 }
 
 async function fetchFirstPage(path, mapper, followingArtists) {
