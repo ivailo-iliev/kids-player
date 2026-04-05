@@ -1,0 +1,152 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: Arial, sans-serif;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-width: 1024px;
+  min-height: 600px;
+}
+
+#leftPanel,
+#rightPanel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  padding: 10px;
+}
+
+#leftPanel {
+  left: 0;
+  width: 62%;
+  border-right: 1px solid #222;
+}
+
+#rightPanel {
+  right: 0;
+  width: 38%;
+}
+
+#tileGrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  padding-bottom: 56px;
+}
+
+.tile {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #111;
+}
+
+.tile.selected {
+  border-color: #1db954;
+}
+
+#leftPanelNav {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.navButton,
+.controlButton {
+  border: 1px solid #2a2a2a;
+  background: #111;
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.navButton {
+  width: 64px;
+  height: 40px;
+  font-size: 28px;
+}
+
+#connectionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  margin-bottom: 10px;
+}
+
+#connectionIcon {
+  width: 18px;
+  height: 18px;
+}
+
+#albumArt {
+  width: 180px;
+  height: 180px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #111;
+  border: 1px solid #222;
+}
+
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.controlButton {
+  width: 52px;
+  height: 52px;
+  padding: 0;
+}
+
+.controlButton img {
+  width: 24px;
+  height: 24px;
+}
+
+#trackList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  height: calc(100% - 260px);
+  overflow: hidden;
+}
+
+#trackList li {
+  padding: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid #171717;
+  color: #bbb;
+}
+
+#trackList li.nowPlaying {
+  color: #fff;
+  background: #1a1a1a;
+}
+
+.controlButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
