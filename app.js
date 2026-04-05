@@ -1,5 +1,5 @@
 const SPOTIFY = {
-  clientId: 'YOUR_SPOTIFY_CLIENT_ID',
+  clientId: '0e8b935d749e40a987ed4e401a446af0',
   redirectUri: window.location.origin + window.location.pathname,
   scopes: [
     'streaming',
@@ -25,44 +25,44 @@ const CONNECTION_STATES = {
 };
 
 const ALLOWED_CONNECTION_TRANSITIONS = {
-  [CONNECTION_STATES.INIT]: [
+  [CONNECTION_STATES.INIT]: new Set([
     CONNECTION_STATES.AUTHORIZING,
     CONNECTION_STATES.CONNECTING,
     CONNECTION_STATES.DISCONNECTED,
     CONNECTION_STATES.ERROR
-  ],
-  [CONNECTION_STATES.AUTHORIZING]: [
+  ]),
+  [CONNECTION_STATES.AUTHORIZING]: new Set([
     CONNECTION_STATES.CONNECTING,
     CONNECTION_STATES.TOKEN_EXPIRED,
     CONNECTION_STATES.ERROR
-  ],
-  [CONNECTION_STATES.CONNECTING]: [
+  ]),
+  [CONNECTION_STATES.CONNECTING]: new Set([
     CONNECTION_STATES.CONNECTED,
     CONNECTION_STATES.DISCONNECTED,
     CONNECTION_STATES.TOKEN_EXPIRED,
     CONNECTION_STATES.ERROR
-  ],
-  [CONNECTION_STATES.CONNECTED]: [
+  ]),
+  [CONNECTION_STATES.CONNECTED]: new Set([
     CONNECTION_STATES.CONNECTING,
     CONNECTION_STATES.DISCONNECTED,
     CONNECTION_STATES.TOKEN_EXPIRED,
     CONNECTION_STATES.ERROR
-  ],
-  [CONNECTION_STATES.DISCONNECTED]: [
+  ]),
+  [CONNECTION_STATES.DISCONNECTED]: new Set([
     CONNECTION_STATES.CONNECTING,
     CONNECTION_STATES.TOKEN_EXPIRED,
     CONNECTION_STATES.ERROR
-  ],
-  [CONNECTION_STATES.TOKEN_EXPIRED]: [
+  ]),
+  [CONNECTION_STATES.TOKEN_EXPIRED]: new Set([
     CONNECTION_STATES.AUTHORIZING,
     CONNECTION_STATES.CONNECTING,
     CONNECTION_STATES.ERROR
-  ],
-  [CONNECTION_STATES.ERROR]: [
+  ]),
+  [CONNECTION_STATES.ERROR]: new Set([
     CONNECTION_STATES.CONNECTING,
     CONNECTION_STATES.AUTHORIZING,
     CONNECTION_STATES.DISCONNECTED
-  ]
+  ])
 };
 
 const STATUS_ICON_CLASSES = {
@@ -108,7 +108,15 @@ const state = {
   trackNodeIndices: [],
   currentIndex: 0,
   currentSourceType: null,
-  healthcheckInFlight: false
+  contextTrackCache: {},
+  artistTrackCache: {},
+  playSelectionRequestId: 0,
+  healthcheckInFlight: false,
+  renderedConnectionIconClass: '',
+  renderedConnectionActive: false,
+  renderedConnectionDetail: '',
+  renderedControlsDisabled: null,
+  renderedAlbumArtSrc: ''
 };
 
 const ui = {
@@ -127,7 +135,7 @@ const ui = {
 
 async function init() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js');
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
   }
 
   bindUiEvents();
@@ -167,6 +175,7 @@ async function init() {
 function bindUiEvents() {
   ui.navPrev.addEventListener('click', () => moveSelection(-1));
   ui.navNext.addEventListener('click', () => moveSelection(1));
+  ui.tileGrid.addEventListener('click', onTileGridClick);
 
   ui.btnPlayPause.addEventListener('click', onTogglePlayPause);
   ui.btnPrev.addEventListener('click', () => onTrackStep(-1));
@@ -209,6 +218,23 @@ function onKeyDown(event) {
   }
 }
 
+async function onTileGridClick(event) {
+  const tileNode = event.target.closest('.tile');
+  if (!tileNode || !ui.tileGrid.contains(tileNode)) {
+    return;
+  }
+
+  const tileIndex = Number(tileNode.dataset.index);
+  if (Number.isNaN(tileIndex)) {
+    return;
+  }
+
+  const previousIndex = state.selectedTileIndex;
+  state.selectedTileIndex = tileIndex;
+  updateSelectedTileUi(previousIndex, state.selectedTileIndex);
+  await playSelectedTile();
+}
+
 function canControlPlayback() {
   return state.connection === CONNECTION_STATES.CONNECTED && state.player && state.deviceId;
 }
@@ -229,6 +255,7 @@ async function playSelectedTile() {
     return;
   }
 
+  const requestId = ++state.playSelectionRequestId;
   const tile = state.favoritesTiles[state.selectedTileIndex];
   if (!tile) {
     return;
@@ -248,9 +275,13 @@ async function playSelectedTile() {
     state.currentSourceType = 'artist';
   }
 
+  if (requestId !== state.playSelectionRequestId) {
+    return;
+  }
+
   if (!state.currentList.length) {
     clearTrackList();
-    ui.albumArt.src = GENRES_PLACEHOLDER;
+    setAlbumArtSrc(GENRES_PLACEHOLDER);
     return;
   }
 
@@ -301,22 +332,11 @@ function renderTiles() {
     visibleIndices.forEach((tileIndex) => {
       const tile = state.favoritesTiles[tileIndex];
       const img = document.createElement('img');
-      const selected = tileIndex === state.selectedTileIndex;
-      img.className = 'tile' + (selected ? ' selected' : '');
-      img.src = tile.image || GENRES_PLACEHOLDER;
-      img.alt = tile.type;
       img.width = TILE_IMAGE_SIZE;
       img.height = TILE_IMAGE_SIZE;
       img.decoding = 'async';
       img.setAttribute('role', 'option');
-      img.setAttribute('aria-selected', selected ? 'true' : 'false');
-
-      img.addEventListener('click', async () => {
-        const previousIndex = state.selectedTileIndex;
-        state.selectedTileIndex = tileIndex;
-        updateSelectedTileUi(previousIndex, state.selectedTileIndex);
-        await playSelectedTile();
-      });
+      applyTileNodeState(img, tileIndex, tile, tileIndex === state.selectedTileIndex);
 
       state.tileNodes.push(img);
       fragment.appendChild(img);
@@ -329,11 +349,27 @@ function renderTiles() {
   for (let i = 0; i < state.tileNodes.length; i += 1) {
     const tileIndex = state.tileNodeIndices[i];
     const tile = state.favoritesTiles[tileIndex];
-    const img = state.tileNodes[i];
-    const selected = tileIndex === state.selectedTileIndex;
-    img.className = 'tile' + (selected ? ' selected' : '');
-    img.src = tile.image || GENRES_PLACEHOLDER;
+    applyTileNodeState(state.tileNodes[i], tileIndex, tile, tileIndex === state.selectedTileIndex);
+  }
+}
+
+function applyTileNodeState(img, tileIndex, tile, selected) {
+  const nextClassName = 'tile' + (selected ? ' selected' : '');
+  const nextSrc = tile.image || GENRES_PLACEHOLDER;
+
+  if (img.className !== nextClassName) {
+    img.className = nextClassName;
+  }
+  if (img.src !== nextSrc) {
+    img.src = nextSrc;
+  }
+  if (img.alt !== tile.type) {
     img.alt = tile.type;
+  }
+  if (img.dataset.index !== String(tileIndex)) {
+    img.dataset.index = String(tileIndex);
+  }
+  if (img.getAttribute('aria-selected') !== (selected ? 'true' : 'false')) {
     img.setAttribute('aria-selected', selected ? 'true' : 'false');
   }
 }
@@ -389,22 +425,33 @@ function updateTrackList() {
 
     ui.trackList.appendChild(fragment);
   } else {
-    for (let i = 0; i < state.trackNodes.length; i += 1) {
-      const trackIndex = state.trackNodeIndices[i];
-      const li = state.trackNodes[i];
-      li.textContent = state.currentList[trackIndex].name;
-      li.classList.toggle('nowPlaying', trackIndex === state.currentIndex);
-    }
+    updateRenderedTrackSelection();
   }
 
   const current = state.currentList[state.currentIndex];
-  ui.albumArt.src = current && current.image ? current.image : GENRES_PLACEHOLDER;
+  setAlbumArtSrc(current && current.image ? current.image : GENRES_PLACEHOLDER);
 }
 
 function clearTrackList() {
   state.trackNodes = [];
   state.trackNodeIndices = [];
   ui.trackList.innerHTML = '';
+}
+
+function updateRenderedTrackSelection() {
+  for (let i = 0; i < state.trackNodes.length; i += 1) {
+    const trackIndex = state.trackNodeIndices[i];
+    state.trackNodes[i].classList.toggle('nowPlaying', trackIndex === state.currentIndex);
+  }
+}
+
+function setAlbumArtSrc(src) {
+  if (state.renderedAlbumArtSrc === src) {
+    return;
+  }
+
+  ui.albumArt.src = src;
+  state.renderedAlbumArtSrc = src;
 }
 
 function scheduleImageWarmCache(tiles) {
@@ -472,9 +519,9 @@ function getWindowedIndices(count, selectedIndex, maxSize) {
 
 function transitionConnection(nextState, detail) {
   const current = state.connection;
-  const allowedNext = ALLOWED_CONNECTION_TRANSITIONS[current] || [];
+  const allowedNext = ALLOWED_CONNECTION_TRANSITIONS[current];
 
-  if (current !== nextState && allowedNext.indexOf(nextState) === -1) {
+  if (current !== nextState && (!allowedNext || !allowedNext.has(nextState))) {
     state.connection = CONNECTION_STATES.ERROR;
     state.connectionDetail = 'Invalid connection transition';
   } else {
@@ -492,14 +539,30 @@ function transitionConnection(nextState, detail) {
 
 function updateConnectionUi() {
   const iconClass = STATUS_ICON_CLASSES[state.connection] || STATUS_ICON_CLASSES[CONNECTION_STATES.DISCONNECTED];
-  ui.connectionIcon.className = 'icon ' + iconClass;
-  ui.connectionIcon.classList.toggle('is-active', state.connection === CONNECTION_STATES.CONNECTED);
-  ui.connectionText.textContent = state.connectionDetail;
+  const isActive = state.connection === CONNECTION_STATES.CONNECTED;
+  const disableControls = !isActive;
 
-  const disableControls = state.connection !== CONNECTION_STATES.CONNECTED;
-  ui.btnPrev.disabled = disableControls;
-  ui.btnPlayPause.disabled = disableControls;
-  ui.btnNext.disabled = disableControls;
+  if (state.renderedConnectionIconClass !== iconClass) {
+    ui.connectionIcon.className = 'icon ' + iconClass;
+    state.renderedConnectionIconClass = iconClass;
+  }
+
+  if (state.renderedConnectionActive !== isActive) {
+    ui.connectionIcon.classList.toggle('is-active', isActive);
+    state.renderedConnectionActive = isActive;
+  }
+
+  if (state.renderedConnectionDetail !== state.connectionDetail) {
+    ui.connectionText.textContent = state.connectionDetail;
+    state.renderedConnectionDetail = state.connectionDetail;
+  }
+
+  if (state.renderedControlsDisabled !== disableControls) {
+    ui.btnPrev.disabled = disableControls;
+    ui.btnPlayPause.disabled = disableControls;
+    ui.btnNext.disabled = disableControls;
+    state.renderedControlsDisabled = disableControls;
+  }
 }
 
 function scheduleReconnect(reason) {
@@ -712,37 +775,44 @@ async function playTrackAtIndex(index) {
     return;
   }
 
-  const payload = {
+  const body = JSON.stringify({
     uris: [track.uri],
     position_ms: 0
-  };
-
-  const response = await fetch('https://api.spotify.com/v1/me/player/play?device_id=' + encodeURIComponent(state.deviceId), {
-    method: 'PUT',
-    headers: spotifyHeaders(),
-    body: JSON.stringify(payload)
   });
 
-  if (response.status === 401) {
-    const tokenOk = await ensureValidToken(true);
-    if (tokenOk) {
-      await playTrackAtIndex(index);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch('https://api.spotify.com/v1/me/player/play?device_id=' + encodeURIComponent(state.deviceId), {
+      method: 'PUT',
+      headers: spotifyHeaders(true),
+      body
+    });
+
+    if (response.status === 401) {
+      const tokenOk = await ensureValidToken(true);
+      if (tokenOk) {
+        continue;
+      }
+      transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
       return;
     }
-    transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
+
+    if (!response.ok) {
+      transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify play request failed');
+      scheduleReconnect('Play request failed');
+      return;
+    }
+
+    updateTrackList();
     return;
   }
-
-  if (!response.ok) {
-    transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify play request failed');
-    scheduleReconnect('Play request failed');
-    return;
-  }
-
-  updateTrackList();
 }
 
 async function fetchContextTracks(type, id) {
+  const cacheKey = type + ':' + id;
+  if (state.contextTrackCache[cacheKey]) {
+    return state.contextTrackCache[cacheKey];
+  }
+
   const endpoint = type === 'playlist'
     ? '/playlists/' + id + '/tracks?limit=100'
     : '/albums/' + id + '/tracks?limit=50';
@@ -751,27 +821,36 @@ async function fetchContextTracks(type, id) {
   const items = data.items || [];
 
   if (type === 'playlist') {
-    return items
+    const tracks = items
       .filter((entry) => entry.track && entry.track.uri)
       .map((entry) => normalizeTrack(entry.track));
+    state.contextTrackCache[cacheKey] = tracks;
+    return tracks;
   }
 
   const album = await spotifyGet('/albums/' + id);
   const image = normalizeAlbumArt(album.images);
 
-  return items
+  const tracks = items
     .filter((track) => track && track.uri)
     .map((track) => ({
       uri: track.uri,
       name: track.name,
       image
     }));
+  state.contextTrackCache[cacheKey] = tracks;
+  return tracks;
 }
 
 async function fetchArtistTracks(artistId) {
+  if (state.artistTrackCache[artistId]) {
+    return state.artistTrackCache[artistId];
+  }
+
   const top = await spotifyGet('/artists/' + artistId + '/top-tracks?market=from_token');
   const topTracks = (top.tracks || []).map(normalizeTrack);
   if (topTracks.length) {
+    state.artistTrackCache[artistId] = topTracks;
     return topTracks;
   }
 
@@ -798,7 +877,9 @@ async function fetchArtistTracks(artistId) {
     });
   });
 
-  return Object.values(trackMap);
+  const tracks = Object.values(trackMap);
+  state.artistTrackCache[artistId] = tracks;
+  return tracks;
 }
 
 function normalizeTrack(track) {
@@ -839,31 +920,46 @@ function pickImageBySize(images, preferredSize) {
 }
 
 async function spotifyGet(path) {
-  const response = await fetch('https://api.spotify.com/v1' + path, {
-    headers: spotifyHeaders()
-  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch('https://api.spotify.com/v1' + path, {
+      headers: spotifyHeaders(false)
+    });
 
-  if (response.status === 401) {
-    const tokenOk = await ensureValidToken(true);
-    if (tokenOk) {
-      return spotifyGet(path);
+    if (response.status === 401) {
+      const tokenOk = await ensureValidToken(true);
+      if (tokenOk) {
+        continue;
+      }
+      transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
+      return {};
     }
-    transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
-    return {};
+
+    if (!response.ok) {
+      transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify API unavailable');
+      return {};
+    }
+
+    return response.json();
   }
 
-  if (!response.ok) {
-    transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify API unavailable');
-    return {};
-  }
-
-  return response.json();
+  return {};
 }
 
-function spotifyHeaders() {
+function spotifyHeaders(includeJsonContentType) {
+  const headers = {
+    Authorization: 'Bearer ' + state.accessToken
+  };
+
+  if (includeJsonContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  return headers;
+}
+
+function tokenRequestHeaders() {
   return {
-    Authorization: 'Bearer ' + state.accessToken,
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/x-www-form-urlencoded'
   };
 }
 
@@ -895,9 +991,21 @@ async function continueFavoritesPagination(path, mapper, followingArtists) {
     const data = await spotifyGet(nextPath.replace('https://api.spotify.com/v1', ''));
     const mapped = mapFavoritesPage(data, mapper, followingArtists);
     if (mapped.items.length) {
+      const previousVisibleIndices = getWindowedIndices(
+        state.favoritesTiles.length,
+        state.selectedTileIndex,
+        MAX_RENDERED_TILES
+      );
       state.favoritesTiles = state.favoritesTiles.concat(mapped.items);
       scheduleImageWarmCache(mapped.items);
-      renderTiles();
+      const nextVisibleIndices = getWindowedIndices(
+        state.favoritesTiles.length,
+        state.selectedTileIndex,
+        MAX_RENDERED_TILES
+      );
+      if (!sameIndices(previousVisibleIndices, nextVisibleIndices)) {
+        renderTiles();
+      }
     }
     nextPath = mapped.next;
     await pauseForUi();
@@ -933,7 +1041,7 @@ async function maybeCompleteAuthRedirect() {
 
   const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: tokenRequestHeaders(),
     body
   });
 
@@ -982,7 +1090,7 @@ async function ensureValidToken(forceRefresh) {
 
   const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: tokenRequestHeaders(),
     body
   });
 
@@ -1018,15 +1126,15 @@ async function loadTokensFromStorage() {
 
 function randomString(length) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let value = '';
   const randomValues = new Uint32Array(length);
+  const value = new Array(length);
   crypto.getRandomValues(randomValues);
 
   for (let i = 0; i < length; i += 1) {
-    value += chars[randomValues[i] % chars.length];
+    value[i] = chars[randomValues[i] % chars.length];
   }
 
-  return value;
+  return value.join('');
 }
 
 async function sha256Base64Url(text) {
@@ -1034,13 +1142,13 @@ async function sha256Base64Url(text) {
   const data = encoder.encode(text);
   const digest = await crypto.subtle.digest('SHA-256', data);
   const bytes = new Uint8Array(digest);
-  let value = '';
+  const chars = new Array(bytes.length);
 
   for (let i = 0; i < bytes.length; i += 1) {
-    value += String.fromCharCode(bytes[i]);
+    chars[i] = String.fromCharCode(bytes[i]);
   }
 
-  return btoa(value)
+  return btoa(chars.join(''))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/g, '');

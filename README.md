@@ -15,6 +15,20 @@ Example:
 python3 -m http.server 8080
 ```
 
+## Netlify Deployment
+
+1. Create a Spotify app in the Spotify Developer Dashboard.
+2. Add your Netlify site URL, for example `https://your-site.netlify.app/`, as a Spotify Redirect URI.
+3. Open `app.js` and replace `YOUR_SPOTIFY_CLIENT_ID` with your Spotify app client ID before deploying.
+4. Upload the repository to Netlify as a static site.
+
+Notes:
+
+- `netlify.toml` configures static publishing from the repo root.
+- Security headers are set for the Spotify Web Playback SDK and API calls.
+- `/sw.js`, `/index.html`, and `/manifest.json` are marked for revalidation so clients pick up updates reliably.
+- A catch-all redirect sends unknown routes to `/index.html`, which keeps the app safe if you later add client-side routes.
+
 ## Behavior
 
 - Left panel: mixed favorites tiles (liked songs, followed artists, playlists, liked albums).
