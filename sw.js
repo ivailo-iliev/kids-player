@@ -1,4 +1,5 @@
 const CACHE_NAME = 'kids-player-v2';
+const IMAGE_CACHE_NAME = 'kids-player-images-v1';
 const APP_SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.json', './assets/icons/app-192.svg', './assets/icons/app-512.svg'];
 
 self.addEventListener('install', (event) => {
@@ -8,13 +9,39 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key !== CACHE_NAME && key !== IMAGE_CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    )
   );
   self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+  const isImageRequest = event.request.destination === 'image';
+  const isSpotifyImage = url.hostname.indexOf('scdn.co') !== -1 || url.hostname.indexOf('spotifycdn.com') !== -1;
+
+  if (isImageRequest || isSpotifyImage) {
+    event.respondWith(
+      caches.open(IMAGE_CACHE_NAME).then(async (cache) => {
+        const cached = await cache.match(event.request);
+        if (cached) {
+          return cached;
+        }
+
+        const response = await fetch(event.request);
+        if (response && (response.ok || response.type === 'opaque')) {
+          cache.put(event.request, response.clone());
+        }
+        return response;
+      })
+    );
+    return;
+  }
 
   if (url.origin.includes('spotify.com')) {
     event.respondWith(fetch(event.request));

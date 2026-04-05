@@ -81,6 +81,12 @@ const GENRES_PLACEHOLDER =
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'><rect width='320' height='320' fill='#1f1f1f'/><circle cx='160' cy='160' r='112' fill='#111'/><path fill='#9e9e9e' d='M162 216c12-12 12-29 12-48v-86h37v-24h-55v78c-4-2-9-4-13-4-17 0-30 12-30 30s13 30 30 30c17 0 30-13 30-30zm-2 67c-28 0-53-11-73-30-19-20-30-45-30-73s11-53 30-73c20-19 45-30 73-30s53 11 73 30c19 20 30 45 30 73s-11 53-30 73c-20 19-45 30-73 30z'/></svg>"
   );
 
+const TILE_IMAGE_SIZE = 160;
+const ALBUM_ART_SIZE = 180;
+const IMAGE_CACHE_WARM_BATCH = 24;
+const MAX_RENDERED_TILES = 30;
+const MAX_RENDERED_TRACKS = 40;
+
 const state = {
   accessToken: null,
   refreshToken: null,
@@ -95,9 +101,14 @@ const state = {
   healthcheckTimerId: null,
   selectedTileIndex: 0,
   favoritesTiles: [],
+  tileNodes: [],
+  tileNodeIndices: [],
   currentList: [],
+  trackNodes: [],
+  trackNodeIndices: [],
   currentIndex: 0,
-  currentSourceType: null
+  currentSourceType: null,
+  healthcheckInFlight: false
 };
 
 const ui = {
@@ -207,9 +218,10 @@ function moveSelection(delta) {
     return;
   }
 
+  const previousIndex = state.selectedTileIndex;
   const count = state.favoritesTiles.length;
   state.selectedTileIndex = ((state.selectedTileIndex + delta) % count + count) % count;
-  renderTiles();
+  updateSelectedTileUi(previousIndex, state.selectedTileIndex);
 }
 
 async function playSelectedTile() {
@@ -237,6 +249,8 @@ async function playSelectedTile() {
   }
 
   if (!state.currentList.length) {
+    clearTrackList();
+    ui.albumArt.src = GENRES_PLACEHOLDER;
     return;
   }
 
@@ -273,40 +287,187 @@ async function onTogglePlayPause() {
 }
 
 function renderTiles() {
-  ui.tileGrid.innerHTML = '';
+  const visibleIndices = getWindowedIndices(state.favoritesTiles.length, state.selectedTileIndex, MAX_RENDERED_TILES);
+  const needsRebuild =
+    state.tileNodes.length !== visibleIndices.length ||
+    !sameIndices(state.tileNodeIndices, visibleIndices);
 
-  state.favoritesTiles.forEach((tile, index) => {
-    const img = document.createElement('img');
-    img.className = 'tile' + (index === state.selectedTileIndex ? ' selected' : '');
-    img.src = tile.image || GENRES_PLACEHOLDER;
-    img.alt = tile.type;
-    img.setAttribute('role', 'option');
-    img.setAttribute('aria-selected', index === state.selectedTileIndex ? 'true' : 'false');
+  if (needsRebuild) {
+    state.tileNodes = [];
+    state.tileNodeIndices = visibleIndices.slice();
+    ui.tileGrid.innerHTML = '';
 
-    img.addEventListener('click', async () => {
-      state.selectedTileIndex = index;
-      renderTiles();
-      await playSelectedTile();
+    const fragment = document.createDocumentFragment();
+    visibleIndices.forEach((tileIndex) => {
+      const tile = state.favoritesTiles[tileIndex];
+      const img = document.createElement('img');
+      const selected = tileIndex === state.selectedTileIndex;
+      img.className = 'tile' + (selected ? ' selected' : '');
+      img.src = tile.image || GENRES_PLACEHOLDER;
+      img.alt = tile.type;
+      img.width = TILE_IMAGE_SIZE;
+      img.height = TILE_IMAGE_SIZE;
+      img.decoding = 'async';
+      img.setAttribute('role', 'option');
+      img.setAttribute('aria-selected', selected ? 'true' : 'false');
+
+      img.addEventListener('click', async () => {
+        const previousIndex = state.selectedTileIndex;
+        state.selectedTileIndex = tileIndex;
+        updateSelectedTileUi(previousIndex, state.selectedTileIndex);
+        await playSelectedTile();
+      });
+
+      state.tileNodes.push(img);
+      fragment.appendChild(img);
     });
 
-    ui.tileGrid.appendChild(img);
-  });
+    ui.tileGrid.appendChild(fragment);
+    return;
+  }
+
+  for (let i = 0; i < state.tileNodes.length; i += 1) {
+    const tileIndex = state.tileNodeIndices[i];
+    const tile = state.favoritesTiles[tileIndex];
+    const img = state.tileNodes[i];
+    const selected = tileIndex === state.selectedTileIndex;
+    img.className = 'tile' + (selected ? ' selected' : '');
+    img.src = tile.image || GENRES_PLACEHOLDER;
+    img.alt = tile.type;
+    img.setAttribute('aria-selected', selected ? 'true' : 'false');
+  }
+}
+
+function updateSelectedTileUi(previousIndex, nextIndex) {
+  if (previousIndex === nextIndex) {
+    return;
+  }
+
+  const previousRendered = state.tileNodeIndices.indexOf(previousIndex);
+  const nextRendered = state.tileNodeIndices.indexOf(nextIndex);
+
+  if (previousRendered === -1 || nextRendered === -1) {
+    renderTiles();
+    return;
+  }
+
+  const previousNode = state.tileNodes[previousRendered];
+  if (previousNode) {
+    previousNode.classList.remove('selected');
+    previousNode.setAttribute('aria-selected', 'false');
+  }
+
+  const nextNode = state.tileNodes[nextRendered];
+  if (nextNode) {
+    nextNode.classList.add('selected');
+    nextNode.setAttribute('aria-selected', 'true');
+  }
 }
 
 function updateTrackList() {
-  ui.trackList.innerHTML = '';
+  const visibleIndices = getWindowedIndices(state.currentList.length, state.currentIndex, MAX_RENDERED_TRACKS);
+  const needsRebuild =
+    state.trackNodes.length !== visibleIndices.length ||
+    !sameIndices(state.trackNodeIndices, visibleIndices);
 
-  state.currentList.forEach((track, index) => {
-    const li = document.createElement('li');
-    li.textContent = track.name;
-    if (index === state.currentIndex) {
-      li.classList.add('nowPlaying');
+  if (needsRebuild) {
+    state.trackNodes = [];
+    state.trackNodeIndices = visibleIndices.slice();
+    ui.trackList.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+
+    visibleIndices.forEach((trackIndex) => {
+      const track = state.currentList[trackIndex];
+      const li = document.createElement('li');
+      li.textContent = track.name;
+      if (trackIndex === state.currentIndex) {
+        li.classList.add('nowPlaying');
+      }
+      state.trackNodes.push(li);
+      fragment.appendChild(li);
+    });
+
+    ui.trackList.appendChild(fragment);
+  } else {
+    for (let i = 0; i < state.trackNodes.length; i += 1) {
+      const trackIndex = state.trackNodeIndices[i];
+      const li = state.trackNodes[i];
+      li.textContent = state.currentList[trackIndex].name;
+      li.classList.toggle('nowPlaying', trackIndex === state.currentIndex);
     }
-    ui.trackList.appendChild(li);
-  });
+  }
 
   const current = state.currentList[state.currentIndex];
   ui.albumArt.src = current && current.image ? current.image : GENRES_PLACEHOLDER;
+}
+
+function clearTrackList() {
+  state.trackNodes = [];
+  state.trackNodeIndices = [];
+  ui.trackList.innerHTML = '';
+}
+
+function scheduleImageWarmCache(tiles) {
+  const tileSource = tiles || state.favoritesTiles;
+  if (!tileSource.length) {
+    return;
+  }
+
+  const allImages = tileSource
+    .map((tile) => tile.image)
+    .filter((url) => !!url)
+    .slice(0, IMAGE_CACHE_WARM_BATCH);
+
+  window.setTimeout(() => {
+    allImages.forEach((url) => {
+      const img = new Image();
+      img.src = url;
+    });
+  }, 0);
+}
+
+function sameIndices(a, b) {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function getWindowedIndices(count, selectedIndex, maxSize) {
+  if (!count) {
+    return [];
+  }
+
+  if (count <= maxSize) {
+    const all = [];
+    for (let i = 0; i < count; i += 1) {
+      all.push(i);
+    }
+    return all;
+  }
+
+  const half = Math.floor(maxSize / 2);
+  let start = selectedIndex - half;
+  if (start < 0) {
+    start = 0;
+  }
+  if (start + maxSize > count) {
+    start = count - maxSize;
+  }
+
+  const result = [];
+  for (let i = start; i < start + maxSize; i += 1) {
+    result.push(i);
+  }
+
+  return result;
 }
 
 function transitionConnection(nextState, detail) {
@@ -398,10 +559,24 @@ async function reconnectPlayer() {
 
 function startHealthchecks() {
   if (state.healthcheckTimerId) {
-    clearInterval(state.healthcheckTimerId);
+    clearTimeout(state.healthcheckTimerId);
   }
 
-  state.healthcheckTimerId = window.setInterval(async () => {
+  const run = async () => {
+    await runHealthcheckOnce();
+    state.healthcheckTimerId = window.setTimeout(run, 15000);
+  };
+
+  state.healthcheckTimerId = window.setTimeout(run, 15000);
+}
+
+async function runHealthcheckOnce() {
+  if (state.healthcheckInFlight) {
+    return;
+  }
+
+  state.healthcheckInFlight = true;
+  try {
     if (!navigator.onLine) {
       transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Network offline');
       return;
@@ -426,35 +601,52 @@ function startHealthchecks() {
       transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify device lost');
       scheduleReconnect('Device missing in healthcheck');
     }
-  }, 15000);
+  } finally {
+    state.healthcheckInFlight = false;
+  }
 }
 
 async function loadFavorites() {
-  const [likedSongs, playlists, artists, albums] = await Promise.all([
-    fetchAll('/me/tracks?limit=50', (item) => ({
+  const likedSongsMapper = (item) => ({
       type: 'song',
       id: item.track.id,
-      image: getImage(item.track.album.images),
+      image: normalizeTileImage(item.track.album.images),
       track: normalizeTrack(item.track)
-    })),
-    fetchAll('/me/playlists?limit=50', (item) => ({
+    });
+  const playlistsMapper = (item) => ({
       type: 'playlist',
       id: item.id,
-      image: getImage(item.images)
-    })),
-    fetchAll('/me/following?type=artist&limit=50', (item) => ({
+      image: normalizeTileImage(item.images)
+    });
+  const artistsMapper = (item) => ({
       type: 'artist',
       id: item.id,
-      image: getImage(item.images)
-    }), true),
-    fetchAll('/me/albums?limit=50', (item) => ({
+      image: normalizeTileImage(item.images)
+    });
+  const albumsMapper = (item) => ({
       type: 'album',
       id: item.album.id,
-      image: getImage(item.album.images)
-    }))
+      image: normalizeTileImage(item.album.images)
+    });
+
+  const [likedSongsPage, playlistsPage, artistsPage, albumsPage] = await Promise.all([
+    fetchFirstPage('/me/tracks?limit=50', likedSongsMapper, false),
+    fetchFirstPage('/me/playlists?limit=50', playlistsMapper, false),
+    fetchFirstPage('/me/following?type=artist&limit=50', artistsMapper, true),
+    fetchFirstPage('/me/albums?limit=50', albumsMapper, false)
   ]);
 
-  state.favoritesTiles = likedSongs.concat(playlists, artists, albums);
+  state.favoritesTiles = likedSongsPage.items
+    .concat(playlistsPage.items, artistsPage.items, albumsPage.items);
+
+  scheduleImageWarmCache();
+
+  window.setTimeout(() => {
+    continueFavoritesPagination(likedSongsPage.next, likedSongsMapper, false);
+    continueFavoritesPagination(playlistsPage.next, playlistsMapper, false);
+    continueFavoritesPagination(artistsPage.next, artistsMapper, true);
+    continueFavoritesPagination(albumsPage.next, albumsMapper, false);
+  }, 0);
 }
 
 async function initSpotifyPlayer() {
@@ -565,7 +757,7 @@ async function fetchContextTracks(type, id) {
   }
 
   const album = await spotifyGet('/albums/' + id);
-  const image = getImage(album.images);
+  const image = normalizeAlbumArt(album.images);
 
   return items
     .filter((track) => track && track.uri)
@@ -586,13 +778,15 @@ async function fetchArtistTracks(artistId) {
   const albumsData = await spotifyGet('/artists/' + artistId + '/albums?include_groups=album,single&limit=50');
   const albums = albumsData.items || [];
   const trackMap = {};
-
-  for (let i = 0; i < albums.length; i += 1) {
-    const album = albums[i];
+  const fetchTasks = albums.map(async (album) => {
     const tracksData = await spotifyGet('/albums/' + album.id + '/tracks?limit=50');
     const tracks = tracksData.items || [];
-    const image = getImage(album.images);
+    const image = normalizeAlbumArt(album.images);
+    return { tracks, image };
+  });
 
+  const albumTracks = await Promise.all(fetchTasks);
+  albumTracks.forEach(({ tracks, image }) => {
     tracks.forEach((track) => {
       if (!trackMap[track.id]) {
         trackMap[track.id] = {
@@ -602,7 +796,7 @@ async function fetchArtistTracks(artistId) {
         };
       }
     });
-  }
+  });
 
   return Object.values(trackMap);
 }
@@ -611,12 +805,37 @@ function normalizeTrack(track) {
   return {
     uri: track.uri,
     name: track.name,
-    image: getImage(track.album && track.album.images)
+    image: normalizeAlbumArt(track.album && track.album.images)
   };
 }
 
-function getImage(images) {
-  return images && images.length ? images[0].url : GENRES_PLACEHOLDER;
+function normalizeTileImage(images) {
+  return pickImageBySize(images, TILE_IMAGE_SIZE);
+}
+
+function normalizeAlbumArt(images) {
+  return pickImageBySize(images, ALBUM_ART_SIZE);
+}
+
+function pickImageBySize(images, preferredSize) {
+  if (!images || !images.length) {
+    return GENRES_PLACEHOLDER;
+  }
+
+  let best = images[0];
+  let bestScore = Number.MAX_VALUE;
+
+  for (let i = 0; i < images.length; i += 1) {
+    const image = images[i];
+    const candidateSize = image.width || image.height || preferredSize;
+    const score = Math.abs(candidateSize - preferredSize);
+    if (score < bestScore) {
+      best = image;
+      bestScore = score;
+    }
+  }
+
+  return best.url;
 }
 
 async function spotifyGet(path) {
@@ -648,24 +867,47 @@ function spotifyHeaders() {
   };
 }
 
-async function fetchAll(path, mapper, followingArtists) {
-  const collection = [];
-  let nextPath = path;
+async function fetchFirstPage(path, mapper, followingArtists) {
+  const data = await spotifyGet(path);
+  return mapFavoritesPage(data, mapper, followingArtists);
+}
 
-  while (nextPath) {
-    const data = await spotifyGet(nextPath.replace('https://api.spotify.com/v1', ''));
-
-    if (followingArtists) {
-      const artists = data.artists || {};
-      (artists.items || []).forEach((item) => collection.push(mapper(item)));
-      nextPath = artists.next;
-    } else {
-      (data.items || []).forEach((item) => collection.push(mapper(item)));
-      nextPath = data.next;
-    }
+function mapFavoritesPage(data, mapper, followingArtists) {
+  if (followingArtists) {
+    const artists = data.artists || {};
+    const items = (artists.items || []).map(mapper);
+    return {
+      items,
+      next: artists.next
+    };
   }
 
-  return collection;
+  const items = (data.items || []).map(mapper);
+  return {
+    items,
+    next: data.next
+  };
+}
+
+async function continueFavoritesPagination(path, mapper, followingArtists) {
+  let nextPath = path;
+  while (nextPath) {
+    const data = await spotifyGet(nextPath.replace('https://api.spotify.com/v1', ''));
+    const mapped = mapFavoritesPage(data, mapper, followingArtists);
+    if (mapped.items.length) {
+      state.favoritesTiles = state.favoritesTiles.concat(mapped.items);
+      scheduleImageWarmCache(mapped.items);
+      renderTiles();
+    }
+    nextPath = mapped.next;
+    await pauseForUi();
+  }
+}
+
+async function pauseForUi() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
 }
 
 async function maybeCompleteAuthRedirect() {
