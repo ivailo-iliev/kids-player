@@ -1289,11 +1289,10 @@ async function spotifyGet(path, options) {
     let response;
 
     try {
-      response = await fetch('https://api.spotify.com/v1' + path, {
+      response = await fetchWithErrorDetail('https://api.spotify.com/v1' + path, {
         headers: spotifyHeaders(false)
-      });
+      }, 'Spotify API request failed');
     } catch (error) {
-      failStartup('Spotify API request failed: ' + describeError(error), error);
       throw error;
     }
 
@@ -1337,6 +1336,15 @@ function tokenRequestHeaders() {
   return {
     'Content-Type': 'application/x-www-form-urlencoded'
   };
+}
+
+async function fetchWithErrorDetail(url, options, label) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    failStartup((label || 'Request failed') + ': ' + url + ' (' + describeError(error) + ')', error);
+    throw error;
+  }
 }
 
 async function loadUserMarket() {
@@ -1424,13 +1432,12 @@ async function maybeCompleteAuthRedirect() {
 
   let tokenRes;
   try {
-    tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+    tokenRes = await fetchWithErrorDetail('https://accounts.spotify.com/api/token', {
       method: 'POST',
       headers: tokenRequestHeaders(),
       body
-    });
+    }, 'Spotify authorization request failed');
   } catch (error) {
-    failStartup('Spotify authorization request failed: ' + describeError(error), error);
     throw error;
   }
 
@@ -1479,13 +1486,12 @@ async function ensureValidToken(forceRefresh) {
 
   let tokenRes;
   try {
-    tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+    tokenRes = await fetchWithErrorDetail('https://accounts.spotify.com/api/token', {
       method: 'POST',
       headers: tokenRequestHeaders(),
       body
-    });
+    }, 'Spotify token refresh failed');
   } catch (error) {
-    failStartup('Spotify token refresh failed: ' + describeError(error), error);
     throw error;
   }
 
