@@ -145,11 +145,19 @@ const ui = {
 };
 
 let spotifySdkReadyResolve = null;
+let spotifyPlayerReadyResolve = null;
 
 function onSpotifyWebPlaybackSDKReady() {
   if (spotifySdkReadyResolve) {
     spotifySdkReadyResolve();
     spotifySdkReadyResolve = null;
+  }
+}
+
+function resolveSpotifyPlayerReady(deviceId) {
+  if (spotifyPlayerReadyResolve) {
+    spotifyPlayerReadyResolve(deviceId);
+    spotifyPlayerReadyResolve = null;
   }
 }
 
@@ -831,6 +839,7 @@ async function reconnectPlayer() {
   try {
     if (state.player) {
       await state.player.connect();
+      await waitForSpotifyPlayerReady();
     } else {
       await initSpotifyPlayer();
     }
@@ -971,10 +980,12 @@ async function initSpotifyPlayer() {
 
   state.player.addListener('ready', ({ device_id: deviceId }) => {
     state.deviceId = deviceId;
+    resolveSpotifyPlayerReady(deviceId);
     transitionConnection(CONNECTION_STATES.CONNECTED, 'Spotify connected');
   });
 
   state.player.addListener('not_ready', () => {
+    state.deviceId = null;
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify disconnected');
     scheduleReconnect('Device became unavailable');
   });
@@ -1004,6 +1015,7 @@ async function initSpotifyPlayer() {
   });
 
   await state.player.connect();
+  await waitForSpotifyPlayerReady();
 }
 
 function waitForSpotifySdk() {
@@ -1014,6 +1026,28 @@ function waitForSpotifySdk() {
     }
 
     spotifySdkReadyResolve = resolve;
+  });
+}
+
+function waitForSpotifyPlayerReady() {
+  if (state.deviceId) {
+    return Promise.resolve(state.deviceId);
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      if (spotifyPlayerReadyResolve === handleReady) {
+        spotifyPlayerReadyResolve = null;
+      }
+      reject(new Error('Spotify player ready timeout'));
+    }, 10000);
+
+    const handleReady = (deviceId) => {
+      clearTimeout(timeoutId);
+      resolve(deviceId);
+    };
+
+    spotifyPlayerReadyResolve = handleReady;
   });
 }
 
