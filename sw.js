@@ -1,5 +1,5 @@
-const CACHE_NAME = 'kids-player-v4';
-const IMAGE_CACHE_NAME = 'kids-player-images-v2';
+const CACHE_NAME = 'kids-player-v5';
+const IMAGE_CACHE_NAME = 'kids-player-images-v3';
 const APP_SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/assets/icons/app-192.svg', '/assets/icons/app-512.svg'];
 
 self.addEventListener('install', (event) => {

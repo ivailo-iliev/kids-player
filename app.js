@@ -142,6 +142,15 @@ const ui = {
   playPauseIcon: document.getElementById('playPauseIcon')
 };
 
+let spotifySdkReadyResolve = null;
+
+function onSpotifyWebPlaybackSDKReady() {
+  if (spotifySdkReadyResolve) {
+    spotifySdkReadyResolve();
+    spotifySdkReadyResolve = null;
+  }
+}
+
 function describeError(error) {
   if (!error) {
     return 'Unknown error';
@@ -1002,7 +1011,7 @@ function waitForSpotifySdk() {
       return;
     }
 
-    window.onSpotifyWebPlaybackSDKReady = () => resolve();
+    spotifySdkReadyResolve = resolve;
   });
 }
 
