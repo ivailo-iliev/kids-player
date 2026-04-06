@@ -1,6 +1,8 @@
 const SPOTIFY = {
   clientId: '0e8b935d749e40a987ed4e401a446af0',
   redirectUri: window.location.origin + window.location.pathname,
+  apiProxyBase: '/.netlify/functions/spotify-api',
+  tokenProxyUrl: '/.netlify/functions/spotify-token',
   scopes: [
     'streaming',
     'user-read-email',
@@ -1028,7 +1030,7 @@ async function playTrackAtIndex(index) {
   });
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch('https://api.spotify.com/v1/me/player/play?device_id=' + encodeURIComponent(state.deviceId), {
+    const response = await fetch(spotifyApiProxyUrl('/me/player/play?device_id=' + encodeURIComponent(state.deviceId)), {
       method: 'PUT',
       headers: spotifyHeaders(true),
       body
@@ -1065,7 +1067,7 @@ async function addTrackToQueue(track) {
     encodeURIComponent(state.deviceId);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch('https://api.spotify.com/v1' + queuePath, {
+    const response = await fetch(spotifyApiProxyUrl(queuePath), {
       method: 'POST',
       headers: spotifyHeaders(false)
     });
@@ -1202,7 +1204,7 @@ async function playContextUri(contextUri) {
   });
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch('https://api.spotify.com/v1/me/player/play?device_id=' + encodeURIComponent(state.deviceId), {
+    const response = await fetch(spotifyApiProxyUrl('/me/player/play?device_id=' + encodeURIComponent(state.deviceId)), {
       method: 'PUT',
       headers: spotifyHeaders(true),
       body
@@ -1322,7 +1324,7 @@ async function spotifyGet(path, options) {
     let response;
 
     try {
-      response = await fetchWithErrorDetail('https://api.spotify.com/v1' + path, {
+      response = await fetchWithErrorDetail(spotifyApiProxyUrl(path), {
         headers: spotifyHeaders(false)
       }, 'Spotify API request failed');
     } catch (error) {
@@ -1369,6 +1371,10 @@ function tokenRequestHeaders() {
   return {
     'Content-Type': 'application/x-www-form-urlencoded'
   };
+}
+
+function spotifyApiProxyUrl(path) {
+  return SPOTIFY.apiProxyBase + '?path=' + encodeURIComponent(path);
 }
 
 async function fetchWithErrorDetail(url, options, label) {
@@ -1465,7 +1471,7 @@ async function maybeCompleteAuthRedirect() {
 
   let tokenRes;
   try {
-    tokenRes = await fetchWithErrorDetail('https://accounts.spotify.com/api/token', {
+    tokenRes = await fetchWithErrorDetail(SPOTIFY.tokenProxyUrl, {
       method: 'POST',
       headers: tokenRequestHeaders(),
       body
@@ -1519,7 +1525,7 @@ async function ensureValidToken(forceRefresh) {
 
   let tokenRes;
   try {
-    tokenRes = await fetchWithErrorDetail('https://accounts.spotify.com/api/token', {
+    tokenRes = await fetchWithErrorDetail(SPOTIFY.tokenProxyUrl, {
       method: 'POST',
       headers: tokenRequestHeaders(),
       body

@@ -1,5 +1,5 @@
-const CACHE_NAME = 'kids-player-v5';
-const IMAGE_CACHE_NAME = 'kids-player-images-v3';
+const CACHE_NAME = 'kids-player-v6';
+const IMAGE_CACHE_NAME = 'kids-player-images-v4';
 const APP_SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/assets/icons/app-192.svg', '/assets/icons/app-512.svg'];
 
 self.addEventListener('install', (event) => {
@@ -25,6 +25,11 @@ self.addEventListener('fetch', (event) => {
   const isHttpRequest = url.protocol === 'http:' || url.protocol === 'https:';
 
   if (!isHttpRequest || event.request.method !== 'GET') {
+    return;
+  }
+
+  if (url.pathname.indexOf('/.netlify/functions/') === 0) {
+    event.respondWith(fetch(event.request));
     return;
   }
 
