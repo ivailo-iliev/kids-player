@@ -141,6 +141,65 @@ const ui = {
   playPauseIcon: document.getElementById('playPauseIcon')
 };
 
+function describeError(error) {
+  if (!error) {
+    return 'Unknown error';
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (error.name && error.message) {
+    return error.name + ': ' + error.message;
+  }
+
+  if (error.message) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function logStartupError(scope, error) {
+  console.error(scope, error);
+}
+
+function failStartup(detail, error) {
+  if (error) {
+    logStartupError(detail, error);
+  }
+  transitionConnection(CONNECTION_STATES.ERROR, detail);
+}
+
+function getStorageItem(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    throw new Error('Browser storage unavailable while reading ' + key + ' (' + describeError(error) + ')');
+  }
+}
+
+function setStorageItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    throw new Error('Browser storage unavailable while writing ' + key + ' (' + describeError(error) + ')');
+  }
+}
+
+function installGlobalErrorHandlers() {
+  window.addEventListener('error', (event) => {
+    const detail = 'Startup failed: ' + describeError(event.error || event.message);
+    failStartup(detail, event.error || event.message);
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const detail = 'Startup failed: ' + describeError(event.reason);
+    failStartup(detail, event.reason);
+  });
+}
+
 function isPortrait() {
   return window.matchMedia('(orientation: portrait)').matches;
 }
@@ -150,6 +209,8 @@ function scrollTilePageBy(direction) {
 }
 
 async function init() {
+  installGlobalErrorHandlers();
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
   }
@@ -159,34 +220,42 @@ async function init() {
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
 
-  await loadTokensFromStorage();
-  await maybeCompleteAuthRedirect();
-
-  if (!state.accessToken) {
-    await startAuthFlow();
-    return;
-  }
-
-  const refreshed = await ensureValidToken();
-  if (!refreshed) {
-    transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify token expired. Reauthorizing...');
-    await startAuthFlow();
-    return;
-  }
-
-  await loadUserMarket();
-  transitionConnection(CONNECTION_STATES.CONNECTING, 'Connecting to Spotify...');
-  await initSpotifyPlayer();
-
   try {
-    await loadFavorites();
-    renderTiles();
-    updateTrackList();
-  } catch (error) {
-    transitionConnection(CONNECTION_STATES.ERROR, 'Could not load favorites');
-  }
+    loadTokensFromStorage();
+    await maybeCompleteAuthRedirect();
 
-  startHealthchecks();
+    if (!state.accessToken) {
+      transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Opening Spotify login...');
+      await startAuthFlow();
+      return;
+    }
+
+    transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Refreshing Spotify session...');
+    const refreshed = await ensureValidToken();
+    if (!refreshed) {
+      transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify token expired. Reauthorizing...');
+      await startAuthFlow();
+      return;
+    }
+
+    transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Loading Spotify account...');
+    await loadUserMarket();
+    transitionConnection(CONNECTION_STATES.CONNECTING, 'Connecting to Spotify...');
+    await initSpotifyPlayer();
+
+    try {
+      await loadFavorites();
+      renderTiles();
+      updateTrackList();
+    } catch (error) {
+      failStartup('Could not load favorites', error);
+      return;
+    }
+
+    startHealthchecks();
+  } catch (error) {
+    failStartup('Startup failed: ' + describeError(error), error);
+  }
 }
 
 function bindUiEvents() {
@@ -1217,9 +1286,16 @@ async function spotifyGet(path, options) {
   const allowResourceErrors = options && options.allowResourceErrors;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch('https://api.spotify.com/v1' + path, {
-      headers: spotifyHeaders(false)
-    });
+    let response;
+
+    try {
+      response = await fetch('https://api.spotify.com/v1' + path, {
+        headers: spotifyHeaders(false)
+      });
+    } catch (error) {
+      failStartup('Spotify API request failed: ' + describeError(error), error);
+      throw error;
+    }
 
     if (response.status === 401) {
       const tokenOk = await ensureValidToken(true);
@@ -1332,7 +1408,7 @@ async function maybeCompleteAuthRedirect() {
     return;
   }
 
-  const verifier = localStorage.getItem('spotify_pkce_verifier');
+  const verifier = getStorageItem('spotify_pkce_verifier');
   if (!verifier) {
     transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Missing PKCE verifier');
     return;
@@ -1346,11 +1422,17 @@ async function maybeCompleteAuthRedirect() {
     code_verifier: verifier
   });
 
-  const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: tokenRequestHeaders(),
-    body
-  });
+  let tokenRes;
+  try {
+    tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: tokenRequestHeaders(),
+      body
+    });
+  } catch (error) {
+    failStartup('Spotify authorization request failed: ' + describeError(error), error);
+    throw error;
+  }
 
   if (!tokenRes.ok) {
     transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization failed');
@@ -1366,7 +1448,7 @@ async function startAuthFlow() {
   const verifier = randomString(64);
   const challenge = await sha256Base64Url(verifier);
 
-  localStorage.setItem('spotify_pkce_verifier', verifier);
+  setStorageItem('spotify_pkce_verifier', verifier);
 
   const authUrl = new URL('https://accounts.spotify.com/authorize');
   authUrl.searchParams.set('client_id', SPOTIFY.clientId);
@@ -1395,11 +1477,17 @@ async function ensureValidToken(forceRefresh) {
     refresh_token: state.refreshToken
   });
 
-  const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: tokenRequestHeaders(),
-    body
-  });
+  let tokenRes;
+  try {
+    tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: tokenRequestHeaders(),
+      body
+    });
+  } catch (error) {
+    failStartup('Spotify token refresh failed: ' + describeError(error), error);
+    throw error;
+  }
 
   if (!tokenRes.ok) {
     return false;
@@ -1420,15 +1508,15 @@ function saveTokens(tokenData) {
   state.refreshToken = tokenData.refresh_token || state.refreshToken;
   state.expiresAt = Date.now() + (tokenData.expires_in || 3600) * 1000;
 
-  localStorage.setItem('spotify_access_token', state.accessToken);
-  localStorage.setItem('spotify_refresh_token', state.refreshToken || '');
-  localStorage.setItem('spotify_expires_at', String(state.expiresAt));
+  setStorageItem('spotify_access_token', state.accessToken);
+  setStorageItem('spotify_refresh_token', state.refreshToken || '');
+  setStorageItem('spotify_expires_at', String(state.expiresAt));
 }
 
-async function loadTokensFromStorage() {
-  state.accessToken = localStorage.getItem('spotify_access_token');
-  state.refreshToken = localStorage.getItem('spotify_refresh_token');
-  state.expiresAt = Number(localStorage.getItem('spotify_expires_at') || 0);
+function loadTokensFromStorage() {
+  state.accessToken = getStorageItem('spotify_access_token');
+  state.refreshToken = getStorageItem('spotify_refresh_token');
+  state.expiresAt = Number(getStorageItem('spotify_expires_at') || 0);
 }
 
 function randomString(length) {
