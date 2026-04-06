@@ -1,4 +1,6 @@
 :root {
+  --tile-gap: 6px;
+  --tile-size: 100px;
   --bg: #000;
   --panel-bg: #111;
   --panel-border: #222;
@@ -78,7 +80,9 @@ body {
 }
 
 .tile {
-  margin: 0 6px 6px 0;
+  width: var(--tile-size);
+  height: var(--tile-size);
+  margin: 0 var(--tile-gap) var(--tile-gap) 0;
   border: 2px solid transparent;
   border-radius: 8px;
   object-fit: cover;
@@ -252,4 +256,100 @@ body {
 .controlButton:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+@media (orientation: portrait) {
+
+  :root {
+    --tile-size: calc((100vw - 3 * var(--tile-gap)) / 4);
+    --tile-area-h: calc(5 * var(--tile-size) + 4 * var(--tile-gap));
+    --left-panel-h: calc(var(--tile-area-h) + 64px);
+  }
+
+  #app {
+    min-width: unset;
+    min-height: unset;
+  }
+
+  #leftPanel {
+    width: 100%;
+    height: var(--left-panel-h);
+    border-right: none;
+    border-bottom: 1px solid var(--panel-border);
+  }
+
+  #rightPanel {
+    top: var(--left-panel-h);
+    left: 0;
+    width: 100%;
+    height: calc(100vh - var(--left-panel-h));
+  }
+
+  #tileGrid {
+    overflow-x: scroll;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    white-space: nowrap;
+    height: var(--tile-area-h);
+    padding-bottom: 0;
+    scrollbar-width: none;
+  }
+
+  #tileGrid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tile-page {
+    display: inline-block;
+    width: 100%;
+    height: 100%;
+    vertical-align: top;
+    white-space: normal;
+    scroll-snap-align: start;
+  }
+
+  .tile-page .tile:nth-child(4n) {
+    margin-right: 0;
+  }
+
+  .tile-page .tile:nth-last-child(-n + 4) {
+    margin-bottom: 0;
+  }
+
+  #leftPanelNav {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    display: block;
+  }
+
+  #navPrev {
+    float: left;
+  }
+
+  #navNext {
+    float: right;
+  }
+
+  .navButton {
+    width: 44%;
+    height: 40px;
+  }
+
+  #albumArt {
+    float: left;
+    width: calc(var(--tile-size) * 0.85);
+    height: calc(var(--tile-size) * 0.85);
+    margin-right: 12px;
+  }
+
+  #controls {
+    margin: 4px 0;
+  }
+
+  #trackList {
+    clear: left;
+    height: auto;
+  }
 }

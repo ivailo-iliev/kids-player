@@ -88,6 +88,7 @@ const ALBUM_ART_IMAGE_SIZE = 160;
 const IMAGE_CACHE_WARM_BATCH = 24;
 const MAX_RENDERED_TILES = 30;
 const MAX_RENDERED_TRACKS = 40;
+const TILES_PER_PAGE = 20;
 
 const state = {
   accessToken: null,
@@ -140,6 +141,14 @@ const ui = {
   playPauseIcon: document.getElementById('playPauseIcon')
 };
 
+function isPortrait() {
+  return window.matchMedia('(orientation: portrait)').matches;
+}
+
+function scrollTilePageBy(direction) {
+  ui.tileGrid.scrollBy({ left: direction * ui.tileGrid.clientWidth, behavior: 'smooth' });
+}
+
 async function init() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
@@ -181,8 +190,14 @@ async function init() {
 }
 
 function bindUiEvents() {
-  ui.navPrev.addEventListener('click', () => moveSelection(-1));
-  ui.navNext.addEventListener('click', () => moveSelection(1));
+  ui.navPrev.addEventListener('click', () => {
+    if (isPortrait()) scrollTilePageBy(-1);
+    else moveSelection(-1);
+  });
+  ui.navNext.addEventListener('click', () => {
+    if (isPortrait()) scrollTilePageBy(1);
+    else moveSelection(1);
+  });
   ui.tileGrid.addEventListener('click', onTileGridClick);
 
   ui.btnPlayPause.addEventListener('click', onTogglePlayPause);
@@ -313,7 +328,36 @@ async function onTogglePlayPause() {
   }
 }
 
+function renderPortraitPages() {
+  const prevScroll = ui.tileGrid.scrollLeft;
+
+  state.tileNodes = [];
+  state.tileNodeIndices = [];
+  ui.tileGrid.innerHTML = '';
+
+  let page = null;
+  state.favoritesTiles.forEach((tile, i) => {
+    if (i % TILES_PER_PAGE === 0) {
+      page = document.createElement('div');
+      page.className = 'tile-page';
+      ui.tileGrid.appendChild(page);
+    }
+    const img = document.createElement('img');
+    applyTileNodeState(img, i, tile, i === state.selectedTileIndex);
+    state.tileNodes.push(img);
+    state.tileNodeIndices.push(i);
+    page.appendChild(img);
+  });
+
+  ui.tileGrid.scrollLeft = prevScroll;
+}
+
 function renderTiles() {
+  if (isPortrait()) {
+    renderPortraitPages();
+    return;
+  }
+
   const visibleIndices = getWindowedIndices(state.favoritesTiles.length, state.selectedTileIndex, MAX_RENDERED_TILES);
   const needsRebuild =
     state.tileNodes.length !== visibleIndices.length ||
@@ -399,6 +443,9 @@ function updateSelectedTileUi(previousIndex, nextIndex) {
   if (nextNode) {
     nextNode.classList.add('selected');
     nextNode.setAttribute('aria-selected', 'true');
+    if (isPortrait()) {
+      nextNode.scrollIntoView({ block: 'nearest', inline: 'start' });
+    }
   }
 }
 
