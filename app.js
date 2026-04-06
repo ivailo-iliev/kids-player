@@ -124,7 +124,8 @@ const state = {
   renderedConnectionDetail: '',
   renderedControlsDisabled: null,
   renderedAlbumArtSrc: '',
-  renderedStatusMessage: ''
+  renderedStatusMessage: '',
+  startupStep: 'boot'
 };
 
 const ui = {
@@ -169,6 +170,16 @@ function failStartup(detail, error) {
   if (error) {
     logStartupError(detail, error);
   }
+
+  if (
+    state.connection === CONNECTION_STATES.ERROR &&
+    state.connectionDetail &&
+    state.connectionDetail !== 'Invalid connection transition' &&
+    state.connectionDetail !== detail
+  ) {
+    return;
+  }
+
   transitionConnection(CONNECTION_STATES.ERROR, detail);
 }
 
@@ -190,12 +201,12 @@ function setStorageItem(key, value) {
 
 function installGlobalErrorHandlers() {
   window.addEventListener('error', (event) => {
-    const detail = 'Startup failed: ' + describeError(event.error || event.message);
+    const detail = 'Startup failed during ' + state.startupStep + ': ' + describeError(event.error || event.message);
     failStartup(detail, event.error || event.message);
   });
 
   window.addEventListener('unhandledrejection', (event) => {
-    const detail = 'Startup failed: ' + describeError(event.reason);
+    const detail = 'Startup failed during ' + state.startupStep + ': ' + describeError(event.reason);
     failStartup(detail, event.reason);
   });
 }
@@ -206,6 +217,10 @@ function isPortrait() {
 
 function scrollTilePageBy(direction) {
   ui.tileGrid.scrollBy({ left: direction * ui.tileGrid.clientWidth, behavior: 'smooth' });
+}
+
+function setStartupStep(step) {
+  state.startupStep = step;
 }
 
 async function init() {
@@ -221,29 +236,38 @@ async function init() {
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
 
   try {
+    setStartupStep('loading saved session');
     loadTokensFromStorage();
+
+    setStartupStep('processing Spotify redirect');
     await maybeCompleteAuthRedirect();
 
     if (!state.accessToken) {
       transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Opening Spotify login...');
+      setStartupStep('opening Spotify login');
       await startAuthFlow();
       return;
     }
 
     transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Refreshing Spotify session...');
+    setStartupStep('refreshing Spotify session');
     const refreshed = await ensureValidToken();
     if (!refreshed) {
       transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify token expired. Reauthorizing...');
+      setStartupStep('reopening Spotify login');
       await startAuthFlow();
       return;
     }
 
     transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Loading Spotify account...');
+    setStartupStep('loading Spotify account');
     await loadUserMarket();
     transitionConnection(CONNECTION_STATES.CONNECTING, 'Connecting to Spotify...');
+    setStartupStep('connecting Spotify player');
     await initSpotifyPlayer();
 
     try {
+      setStartupStep('loading favorites');
       await loadFavorites();
       renderTiles();
       updateTrackList();
@@ -254,7 +278,7 @@ async function init() {
 
     startHealthchecks();
   } catch (error) {
-    failStartup('Startup failed: ' + describeError(error), error);
+    failStartup('Startup failed during ' + state.startupStep + ': ' + describeError(error), error);
   }
 }
 
