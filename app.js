@@ -98,6 +98,8 @@ const state = {
   expiresAt: 0,
   player: null,
   deviceId: null,
+  playbackUnsupported: false,
+  playerInitDiagnostic: '',
   market: 'US',
   isPlaying: false,
   connection: CONNECTION_STATES.INIT,
@@ -179,6 +181,74 @@ function describeError(error) {
   }
 
   return String(error);
+}
+
+function isPlayerReadyTimeoutError(error) {
+  return !!(error && error.message === 'Spotify player ready timeout');
+}
+
+function isRecoverablePlayerInitError(error) {
+  return isPlayerReadyTimeoutError(error);
+}
+
+async function detectPlaybackCompatibilityIssue() {
+  if (!window.isSecureContext) {
+    return 'The page is not running in a secure context (HTTPS is required).';
+  }
+
+  if (typeof window.MediaSource === 'undefined') {
+    return 'This browser does not expose MediaSource, which Spotify playback needs.';
+  }
+
+  if (
+    !navigator.requestMediaKeySystemAccess ||
+    typeof navigator.requestMediaKeySystemAccess !== 'function'
+  ) {
+    return 'This browser does not expose Encrypted Media Extensions (EME).';
+  }
+
+  try {
+    const keySystemAccess = await navigator.requestMediaKeySystemAccess('com.widevine.alpha', [{
+      initDataTypes: ['cenc'],
+      audioCapabilities: [
+        { contentType: 'audio/mp4; codecs="mp4a.40.2"' }
+      ],
+      videoCapabilities: [
+        { contentType: 'video/mp4; codecs="avc1.42E01E"' }
+      ]
+    }]);
+
+    if (!keySystemAccess) {
+      return 'Widevine DRM support is unavailable.';
+    }
+  } catch (error) {
+    return 'Widevine DRM is unavailable: ' + describeError(error);
+  }
+
+  return '';
+}
+
+async function buildPlaybackUnsupportedMessage(error) {
+  const diagnostics = [];
+
+  if (state.playerInitDiagnostic) {
+    diagnostics.push(state.playerInitDiagnostic);
+  }
+
+  const compatibilityIssue = await detectPlaybackCompatibilityIssue();
+  if (compatibilityIssue) {
+    diagnostics.push(compatibilityIssue);
+  }
+
+  if (!diagnostics.length && isPlayerReadyTimeoutError(error)) {
+    diagnostics.push('Spotify player did not become ready before the timeout.');
+  }
+
+  if (!diagnostics.length) {
+    diagnostics.push('Spotify playback is not available in this browser.');
+  }
+
+  return diagnostics.join(' ');
 }
 
 function logStartupError(scope, error) {
@@ -281,9 +351,6 @@ async function init() {
     transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Loading Spotify account...');
     setStartupStep('loading Spotify account');
     await loadUserMarket();
-    transitionConnection(CONNECTION_STATES.CONNECTING, 'Connecting to Spotify...');
-    setStartupStep('connecting Spotify player');
-    await initSpotifyPlayer();
 
     try {
       setStartupStep('loading favorites');
@@ -295,7 +362,26 @@ async function init() {
       return;
     }
 
-    startHealthchecks();
+    transitionConnection(CONNECTION_STATES.CONNECTING, 'Connecting to Spotify...');
+    setStartupStep('connecting Spotify player');
+
+    try {
+      await initSpotifyPlayer();
+      startHealthchecks();
+    } catch (error) {
+      if (!isRecoverablePlayerInitError(error)) {
+        throw error;
+      }
+
+      state.playbackUnsupported = true;
+      clearReconnectTimer();
+      state.playerInitDiagnostic = await buildPlaybackUnsupportedMessage(error);
+      setStatusMessage(state.playerInitDiagnostic);
+      transitionConnection(
+        CONNECTION_STATES.ERROR,
+        state.playerInitDiagnostic + ' Favorites loaded, but playback controls are disabled.'
+      );
+    }
   } catch (error) {
     failStartup('Startup failed during ' + state.startupStep + ': ' + describeError(error), error);
   }
@@ -802,7 +888,7 @@ function updateConnectionUi() {
 }
 
 function scheduleReconnect(reason) {
-  if (state.reconnectTimerId || state.connection === CONNECTION_STATES.CONNECTED) {
+  if (state.playbackUnsupported || state.reconnectTimerId || state.connection === CONNECTION_STATES.CONNECTED) {
     return;
   }
 
@@ -825,6 +911,10 @@ function clearReconnectTimer() {
 }
 
 async function reconnectPlayer() {
+  if (state.playbackUnsupported) {
+    return;
+  }
+
   if (!navigator.onLine) {
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Network offline');
     return;
@@ -972,6 +1062,8 @@ async function loadFavorites() {
 async function initSpotifyPlayer() {
   await waitForSpotifySdk();
 
+  state.playerInitDiagnostic = '';
+
   state.player = new Spotify.Player({
     name: 'Kids Player',
     getOAuthToken: (cb) => cb(state.accessToken),
@@ -979,6 +1071,7 @@ async function initSpotifyPlayer() {
   });
 
   state.player.addListener('ready', ({ device_id: deviceId }) => {
+    state.playbackUnsupported = false;
     state.deviceId = deviceId;
     resolveSpotifyPlayerReady(deviceId);
     transitionConnection(CONNECTION_STATES.CONNECTED, 'Spotify connected');
@@ -990,17 +1083,32 @@ async function initSpotifyPlayer() {
     scheduleReconnect('Device became unavailable');
   });
 
-  state.player.addListener('initialization_error', () => {
-    transitionConnection(CONNECTION_STATES.ERROR, 'Spotify initialization error');
+  state.player.addListener('initialization_error', ({ message }) => {
+    state.playerInitDiagnostic = 'Spotify initialization error: ' + (message || 'unknown error') + '.';
+    console.error(state.playerInitDiagnostic);
+    setStatusMessage(state.playerInitDiagnostic);
+    transitionConnection(CONNECTION_STATES.ERROR, state.playerInitDiagnostic);
     scheduleReconnect('Player init error');
   });
 
-  state.player.addListener('authentication_error', () => {
-    transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authentication error');
+  state.player.addListener('authentication_error', ({ message }) => {
+    const detail = 'Spotify authentication error' + (message ? ': ' + message : '');
+    console.error(detail);
+    setStatusMessage(detail);
+    transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, detail);
   });
 
-  state.player.addListener('account_error', () => {
-    transitionConnection(CONNECTION_STATES.ERROR, 'Spotify Premium account required');
+  state.player.addListener('account_error', ({ message }) => {
+    const detail = message || 'Spotify Premium account required';
+    console.error(detail);
+    setStatusMessage(detail);
+    transitionConnection(CONNECTION_STATES.ERROR, detail);
+  });
+
+  state.player.addListener('autoplay_failed', () => {
+    const detail = 'Browser blocked autoplay. Tap play to start Spotify playback.';
+    console.warn(detail);
+    setStatusMessage(detail);
   });
 
   state.player.addListener('player_state_changed', (sdkState) => {
