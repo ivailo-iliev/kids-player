@@ -32,10 +32,14 @@
           <span id="connectionIcon" class="icon icon-connecting" aria-hidden="true"></span>
           <span id="connectionText">Connecting to Spotify...</span>
         </div>
+        <div id="outputStateText">Output: Local playback</div>
 
         <img id="albumArt" alt="Current album art" width="160" height="160" decoding="async" />
 
         <div id="controls" aria-label="Playback controls">
+          <button id="btnCast" class="controlButton" aria-label="Choose playback output">
+            <span class="icon icon-connected" aria-hidden="true"></span>
+          </button>
           <button id="btnPrev" class="controlButton" aria-label="Previous song">
             <span class="icon icon-skip-previous" aria-hidden="true"></span>
           </button>
