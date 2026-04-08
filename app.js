@@ -1085,10 +1085,11 @@ async function initSpotifyPlayer() {
 
   state.player.addListener('initialization_error', ({ message }) => {
     state.playerInitDiagnostic = 'Spotify initialization error: ' + (message || 'unknown error') + '.';
+    state.playbackUnsupported = true;
+    clearReconnectTimer();
     console.error(state.playerInitDiagnostic);
     setStatusMessage(state.playerInitDiagnostic);
     transitionConnection(CONNECTION_STATES.ERROR, state.playerInitDiagnostic);
-    scheduleReconnect('Player init error');
   });
 
   state.player.addListener('authentication_error', ({ message }) => {
