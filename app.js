@@ -32,6 +32,12 @@ const PLAYBACK_MODES = {
   REMOTE: 'remote'
 };
 
+const REMOTE_DEVICE_TYPES = {
+  SPOTIFY_CONNECT: 'spotify_connect',
+  GOOGLE_CAST: 'google_cast',
+  AIRPLAY: 'airplay'
+};
+
 const ALLOWED_CONNECTION_TRANSITIONS = {
   [CONNECTION_STATES.INIT]: new Set([
     CONNECTION_STATES.AUTHORIZING,
@@ -107,7 +113,9 @@ const state = {
   activeRemoteDeviceId: '',
   activeRemoteDeviceName: '',
   availableDevices: [],
+  externalDevices: [],
   devicePickerOpen: false,
+  devicePickerRequestId: 0,
   playbackUnsupported: false,
   playerInitDiagnostic: '',
   market: 'US',
@@ -429,8 +437,12 @@ async function onCastButtonClick() {
   ui.btnCast.classList.toggle('is-active', state.devicePickerOpen);
 
   if (state.devicePickerOpen) {
+    state.devicePickerRequestId += 1;
+    const requestId = state.devicePickerRequestId;
     await refreshAvailableDevices();
-    renderDevicePickerInTrackList();
+    if (state.devicePickerOpen && requestId === state.devicePickerRequestId) {
+      renderDevicePickerInTrackList();
+    }
   } else {
     updateTrackList();
   }
@@ -494,7 +506,7 @@ function canControlPlayback() {
 }
 
 function getRemoteDeviceById(deviceId) {
-  return state.availableDevices.find((device) => device.id === deviceId);
+  return state.availableDevices.find((device) => device.id === deviceId && device.type === REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT);
 }
 
 function getRemotePlaybackLabel() {
@@ -521,7 +533,14 @@ function getOutputStateMessage() {
 async function refreshAvailableDevices() {
   const data = await spotifyGet('/me/player/devices', { allowResourceErrors: true });
   const devices = data && data.devices ? data.devices : [];
-  state.availableDevices = devices;
+  const spotifyDevices = devices.map((device) => ({
+    id: device.id,
+    name: device.name,
+    type: REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT
+  }));
+  const externalDevices = enumerateExternalRemoteDevices();
+  state.externalDevices = externalDevices;
+  state.availableDevices = spotifyDevices.concat(externalDevices);
 
   if (state.activeRemoteDeviceId) {
     const activeDevice = getRemoteDeviceById(state.activeRemoteDeviceId);
@@ -566,8 +585,13 @@ function renderDevicePickerInTrackList() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'trackListButton' + (state.activeRemoteDeviceId === device.id ? ' is-selected' : '');
-    button.textContent = device.name;
+    button.textContent = device.name + (device.type === REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT ? '' : ' (Detected)');
+    const selectable = device.type === REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT && !!device.id;
+    button.disabled = !selectable;
     button.addEventListener('click', () => {
+      if (!selectable) {
+        return;
+      }
       selectRemotePlaybackDevice(device);
       state.devicePickerOpen = false;
       ui.btnCast.classList.remove('is-active');
@@ -576,6 +600,47 @@ function renderDevicePickerInTrackList() {
     li.appendChild(button);
     ui.trackList.appendChild(li);
   });
+}
+
+function enumerateExternalRemoteDevices() {
+  const devices = [];
+
+  if (typeof window.chrome !== 'undefined' && window.chrome.cast && window.chrome.cast.isAvailable) {
+    devices.push({
+      id: '',
+      name: 'Google Cast devices',
+      type: REMOTE_DEVICE_TYPES.GOOGLE_CAST
+    });
+  }
+
+  if (window.WebKitPlaybackTargetAvailabilityEvent) {
+    devices.push({
+      id: '',
+      name: 'AirPlay devices',
+      type: REMOTE_DEVICE_TYPES.AIRPLAY
+    });
+  }
+
+  return devices;
+}
+
+function setPlayingState(isPlaying) {
+  state.isPlaying = !!isPlaying;
+  ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
+  ui.btnPlayPause.classList.toggle('is-active', state.isPlaying);
+}
+
+async function refreshPlaybackState() {
+  if (state.playbackMode === PLAYBACK_MODES.LOCAL) {
+    return;
+  }
+
+  const playbackState = await spotifyGet('/me/player', { allowResourceErrors: true });
+  if (!playbackState) {
+    return;
+  }
+
+  setPlayingState(!!playbackState.is_playing);
 }
 
 function selectLocalPlaybackMode() {
@@ -685,9 +750,7 @@ async function onTogglePlayPause() {
     } else {
       await remoteResume();
     }
-    state.isPlaying = !state.isPlaying;
-    ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
-    ui.btnPlayPause.classList.toggle('is-active', state.isPlaying);
+    await refreshPlaybackState();
   } catch (error) {
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Playback device unavailable');
     scheduleReconnect('Playback toggle failed');
@@ -1306,9 +1369,7 @@ async function initSpotifyPlayer() {
       return;
     }
 
-    state.isPlaying = !sdkState.paused;
-    ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
-    ui.btnPlayPause.classList.toggle('is-active', state.isPlaying);
+    setPlayingState(!sdkState.paused);
     updateTrackListFromPlayerState(sdkState);
   });
 
@@ -1550,6 +1611,10 @@ async function playContextUri(contextUri) {
       return;
     }
 
+    await refreshPlaybackState();
+    if (state.playbackMode === PLAYBACK_MODES.LOCAL) {
+      setPlayingState(true);
+    }
     return;
   }
 }
@@ -1576,9 +1641,10 @@ async function playTrackUri(trackUri) {
   });
 
   if (response.ok) {
-    state.isPlaying = true;
-    ui.playPauseIcon.className = 'icon icon-pause-circle';
-    ui.btnPlayPause.classList.add('is-active');
+    await refreshPlaybackState();
+    if (state.playbackMode === PLAYBACK_MODES.LOCAL) {
+      setPlayingState(true);
+    }
   }
 }
 
