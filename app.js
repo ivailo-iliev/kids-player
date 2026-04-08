@@ -433,18 +433,18 @@ function bindUiEvents() {
 }
 
 async function onCastButtonClick() {
-  state.devicePickerOpen = !state.devicePickerOpen;
-  ui.btnCast.classList.toggle('is-active', state.devicePickerOpen);
-
   if (state.devicePickerOpen) {
-    state.devicePickerRequestId += 1;
-    const requestId = state.devicePickerRequestId;
-    await refreshAvailableDevices();
-    if (state.devicePickerOpen && requestId === state.devicePickerRequestId) {
-      renderDevicePickerInTrackList();
-    }
-  } else {
-    updateTrackList();
+    closeDevicePicker();
+    return;
+  }
+
+  state.devicePickerOpen = true;
+  ui.btnCast.classList.add('is-active');
+  state.devicePickerRequestId += 1;
+  const requestId = state.devicePickerRequestId;
+  await refreshAvailableDevices();
+  if (state.devicePickerOpen && requestId === state.devicePickerRequestId) {
+    renderDevicePickerInTrackList();
   }
 }
 
@@ -565,9 +565,7 @@ function renderDevicePickerInTrackList() {
   localButton.textContent = 'Local playback' + (state.playbackUnsupported ? ' (Unavailable)' : '');
   localButton.addEventListener('click', () => {
     selectLocalPlaybackMode();
-    state.devicePickerOpen = false;
-    ui.btnCast.classList.remove('is-active');
-    updateTrackList();
+    closeDevicePicker();
   });
   localOption.appendChild(localButton);
   ui.trackList.appendChild(localOption);
@@ -588,14 +586,12 @@ function renderDevicePickerInTrackList() {
     button.textContent = device.name + (device.type === REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT ? '' : ' (Detected)');
     const selectable = device.type === REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT && !!device.id;
     button.disabled = !selectable;
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       if (!selectable) {
         return;
       }
-      selectRemotePlaybackDevice(device);
-      state.devicePickerOpen = false;
-      ui.btnCast.classList.remove('is-active');
-      updateTrackList();
+      await selectRemotePlaybackDevice(device, { transferNow: true });
+      closeDevicePicker();
     });
     li.appendChild(button);
     ui.trackList.appendChild(li);
@@ -648,11 +644,25 @@ function selectLocalPlaybackMode() {
   updateConnectionUi();
 }
 
-function selectRemotePlaybackDevice(device) {
+async function selectRemotePlaybackDevice(device, options) {
+  const transferNow = !!(options && options.transferNow);
   state.playbackMode = PLAYBACK_MODES.REMOTE;
   state.activeRemoteDeviceId = device.id;
   state.activeRemoteDeviceName = device.name || 'Remote device';
+
+  if (transferNow) {
+    await transferPlaybackToRemoteDevice(state.isPlaying);
+    await refreshPlaybackState();
+  }
+
   updateConnectionUi();
+}
+
+function closeDevicePicker() {
+  state.devicePickerOpen = false;
+  state.devicePickerRequestId += 1;
+  ui.btnCast.classList.remove('is-active');
+  updateTrackList();
 }
 
 function autoSelectPlaybackOutput() {
@@ -1648,7 +1658,7 @@ async function playTrackUri(trackUri) {
   }
 }
 
-async function transferPlaybackToRemoteDevice() {
+async function transferPlaybackToRemoteDevice(shouldPlay) {
   if (!state.activeRemoteDeviceId) {
     return;
   }
@@ -1657,7 +1667,7 @@ async function transferPlaybackToRemoteDevice() {
     method: 'PUT',
     body: JSON.stringify({
       device_ids: [state.activeRemoteDeviceId],
-      play: false
+      play: !!shouldPlay
     }),
     includeJsonContentType: true,
     suppressReconnect: true
