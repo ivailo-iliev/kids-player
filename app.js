@@ -141,11 +141,6 @@ const state = {
   queueSyncInFlight: false,
   queueSyncPending: false,
   queueSyncCurrentTrack: null,
-  renderedConnectionIconClass: '',
-  renderedConnectionActive: false,
-  renderedConnectionDetail: '',
-  renderedOutputState: '',
-  renderedControlsDisabled: null,
   renderedAlbumArtSrc: '',
   renderedStatusMessage: '',
   startupStep: 'boot'
@@ -505,20 +500,6 @@ function canControlPlayback() {
   return !!state.activeRemoteDeviceId;
 }
 
-function getRemoteDeviceById(deviceId) {
-  return state.availableDevices.find((device) => device.id === deviceId && device.type === REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT);
-}
-
-function getRemotePlaybackLabel() {
-  if (!state.availableDevices.length) {
-    return 'No remote devices found';
-  }
-  if (!state.activeRemoteDeviceId) {
-    return 'No remote device selected';
-  }
-  return state.activeRemoteDeviceName || 'Remote device selected';
-}
-
 function getOutputStateMessage() {
   const localAvailable = !state.playbackUnsupported && !!state.deviceId;
   const localText = localAvailable ? 'Local available' : 'Local unavailable';
@@ -527,7 +508,13 @@ function getOutputStateMessage() {
     return 'Output: Local playback (' + localText + ')';
   }
 
-  return 'Output: Remote playback (' + getRemotePlaybackLabel() + ')';
+  if (!state.availableDevices.length) {
+    return 'Output: Remote playback (No remote devices found)';
+  }
+  if (!state.activeRemoteDeviceId) {
+    return 'Output: Remote playback (No remote device selected)';
+  }
+  return 'Output: Remote playback (' + (state.activeRemoteDeviceName || 'Remote device selected') + ')';
 }
 
 async function refreshAvailableDevices() {
@@ -543,7 +530,10 @@ async function refreshAvailableDevices() {
   state.availableDevices = spotifyDevices.concat(externalDevices);
 
   if (state.activeRemoteDeviceId) {
-    const activeDevice = getRemoteDeviceById(state.activeRemoteDeviceId);
+    const activeDevice = state.availableDevices.find(
+      (device) =>
+        device.id === state.activeRemoteDeviceId && device.type === REMOTE_DEVICE_TYPES.SPOTIFY_CONNECT
+    );
     if (activeDevice) {
       state.activeRemoteDeviceName = activeDevice.name || 'Remote device';
     }
@@ -1112,35 +1102,14 @@ function updateConnectionUi() {
   const iconClass = STATUS_ICON_CLASSES[state.connection] || STATUS_ICON_CLASSES[CONNECTION_STATES.DISCONNECTED];
   const isActive = state.connection === CONNECTION_STATES.CONNECTED;
   const disableControls = !canControlPlayback();
-  const outputState = getOutputStateMessage();
-
-  if (state.renderedConnectionIconClass !== iconClass) {
-    ui.connectionIcon.className = 'icon ' + iconClass;
-    state.renderedConnectionIconClass = iconClass;
-  }
-
-  if (state.renderedConnectionActive !== isActive) {
-    ui.connectionIcon.classList.toggle('is-active', isActive);
-    state.renderedConnectionActive = isActive;
-  }
-
-  if (state.renderedConnectionDetail !== state.connectionDetail) {
-    ui.connectionText.textContent = state.connectionDetail;
-    state.renderedConnectionDetail = state.connectionDetail;
-    state.renderedStatusMessage = state.connectionDetail;
-  }
-
-  if (state.renderedOutputState !== outputState) {
-    ui.outputStateText.textContent = outputState;
-    state.renderedOutputState = outputState;
-  }
-
-  if (state.renderedControlsDisabled !== disableControls) {
-    ui.btnPrev.disabled = disableControls;
-    ui.btnPlayPause.disabled = disableControls;
-    ui.btnNext.disabled = disableControls;
-    state.renderedControlsDisabled = disableControls;
-  }
+  ui.connectionIcon.className = 'icon ' + iconClass;
+  ui.connectionIcon.classList.toggle('is-active', isActive);
+  ui.connectionText.textContent = state.connectionDetail;
+  state.renderedStatusMessage = state.connectionDetail;
+  ui.outputStateText.textContent = getOutputStateMessage();
+  ui.btnPrev.disabled = disableControls;
+  ui.btnPlayPause.disabled = disableControls;
+  ui.btnNext.disabled = disableControls;
 }
 
 function scheduleReconnect(reason) {
