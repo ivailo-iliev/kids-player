@@ -412,11 +412,60 @@ function bindUiEvents() {
     else moveSelection(-1);
   });
   ui.navNext.addEventListener('click', () => {
-    if (isPortrait()) scrollTilePageBy(1);
-    else moveSelection(1);
-  });
-  ui.tileGrid.addEventListener('click', onTileGridClick);
+  if (shouldIgnoreGlobalKeydown(event)) {
+    return;
+  }
 
+function shouldIgnoreGlobalKeydown(event) {
+  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
+    return true;
+  }
+
+  const active = document.activeElement;
+  if (!active) {
+    return false;
+  }
+
+  if (active.isContentEditable) {
+    return true;
+  }
+
+  const tag = active.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+    return localAvailable ? 'Output: Local' : 'Output: Local (off)';
+    return 'Output: Remote (none)';
+    return 'Output: Remote';
+  return 'Output: ' + shortenLabel(state.activeRemoteDeviceName || 'Remote', 16);
+}
+
+function getConnectionStatusLabel(stateName, detail) {
+  if (detail && detail.toLowerCase().includes('local spotify playback unavailable')) {
+    return 'Local off';
+  }
+
+  if (stateName === CONNECTION_STATES.CONNECTED) {
+    return 'Connected';
+  }
+  if (stateName === CONNECTION_STATES.DISCONNECTED) {
+    return 'Offline';
+  }
+  if (stateName === CONNECTION_STATES.TOKEN_EXPIRED) {
+    return 'Sign in';
+  }
+  if (stateName === CONNECTION_STATES.ERROR) {
+    return 'Error';
+  }
+
+  return 'Connecting';
+}
+
+function shortenLabel(value, maxLength) {
+  if (!value || value.length <= maxLength) {
+    return value;
+  }
+  return value.slice(0, Math.max(1, maxLength - 1)) + '…';
   ui.btnPlayPause.addEventListener('click', onTogglePlayPause);
   ui.btnPrev.addEventListener('click', () => onTrackStep(-1));
   ui.btnNext.addEventListener('click', () => onTrackStep(1));
@@ -787,6 +836,9 @@ function renderTiles() {
     return;
   }
 
+  if (img.tabIndex !== (selected ? 0 : -1)) {
+    img.tabIndex = selected ? 0 : -1;
+  }
   const visibleIndices = getWindowedIndices(state.favoritesTiles.length, state.selectedTileIndex, MAX_RENDERED_TILES);
   const needsRebuild =
     state.tileNodes.length !== visibleIndices.length ||
@@ -939,9 +991,10 @@ function updateTrackListFromPlayerState(sdkState) {
   syncQueueState(normalizePlayerTrack(currentTrack));
 }
 
-function normalizePlayerTrack(track) {
-  const image = normalizeAlbumArt(track.album && track.album.images);
-  return {
+  const compact = getConnectionStatusLabel(state.connection, message);
+  if (state.renderedStatusMessage === compact) {
+  ui.statusPrimary.textContent = compact;
+  state.renderedStatusMessage = compact;
     uri: track.uri,
     name: track.name,
     image: image.url,
@@ -1034,8 +1087,9 @@ function scheduleImageWarmCache(tiles) {
   }, 0);
 }
 
-function sameIndices(a, b) {
-  if (a.length !== b.length) {
+  const compactStatus = getConnectionStatusLabel(state.connection, state.connectionDetail);
+  ui.statusPrimary.textContent = compactStatus;
+  state.renderedStatusMessage = compactStatus;
     return false;
   }
 
