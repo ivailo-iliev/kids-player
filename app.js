@@ -151,6 +151,7 @@ const ui = {
   navPrev: document.getElementById('navPrev'),
   navNext: document.getElementById('navNext'),
   connectionIcon: document.getElementById('connectionIcon'),
+  statusPrimary: document.getElementById('statusPrimary'),
   connectionText: document.getElementById('connectionText'),
   outputStateText: document.getElementById('outputStateText'),
   albumArt: document.getElementById('albumArt'),
@@ -412,9 +413,20 @@ function bindUiEvents() {
     else moveSelection(-1);
   });
   ui.navNext.addEventListener('click', () => {
-  if (shouldIgnoreGlobalKeydown(event)) {
-    return;
-  }
+    if (isPortrait()) scrollTilePageBy(1);
+    else moveSelection(1);
+  });
+  ui.tileGrid.addEventListener('click', onTileGridClick);
+
+  ui.btnPlayPause.addEventListener('click', onTogglePlayPause);
+  ui.btnPrev.addEventListener('click', () => onTrackStep(-1));
+  ui.btnNext.addEventListener('click', () => onTrackStep(1));
+  ui.btnCast.addEventListener('click', onCastButtonClick);
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('online', onBrowserOnline);
+  window.addEventListener('offline', onBrowserOffline);
+}
 
 function shouldIgnoreGlobalKeydown(event) {
   if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
@@ -432,12 +444,6 @@ function shouldIgnoreGlobalKeydown(event) {
 
   const tag = active.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-}
-
-    return localAvailable ? 'Output: Local' : 'Output: Local (off)';
-    return 'Output: Remote (none)';
-    return 'Output: Remote';
-  return 'Output: ' + shortenLabel(state.activeRemoteDeviceName || 'Remote', 16);
 }
 
 function getConnectionStatusLabel(stateName, detail) {
@@ -466,14 +472,6 @@ function shortenLabel(value, maxLength) {
     return value;
   }
   return value.slice(0, Math.max(1, maxLength - 1)) + '…';
-  ui.btnPlayPause.addEventListener('click', onTogglePlayPause);
-  ui.btnPrev.addEventListener('click', () => onTrackStep(-1));
-  ui.btnNext.addEventListener('click', () => onTrackStep(1));
-  ui.btnCast.addEventListener('click', onCastButtonClick);
-
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('online', onBrowserOnline);
-  window.addEventListener('offline', onBrowserOffline);
 }
 
 async function onCastButtonClick() {
@@ -503,6 +501,10 @@ function onBrowserOffline() {
 }
 
 function onKeyDown(event) {
+  if (shouldIgnoreGlobalKeydown(event)) {
+    return;
+  }
+
   const cols = 5;
 
   if (event.key === 'ArrowLeft') {
@@ -991,10 +993,9 @@ function updateTrackListFromPlayerState(sdkState) {
   syncQueueState(normalizePlayerTrack(currentTrack));
 }
 
-  const compact = getConnectionStatusLabel(state.connection, message);
-  if (state.renderedStatusMessage === compact) {
-  ui.statusPrimary.textContent = compact;
-  state.renderedStatusMessage = compact;
+function normalizePlayerTrack(track) {
+  const image = normalizeAlbumArt(track.album && track.album.images);
+  return {
     uri: track.uri,
     name: track.name,
     image: image.url,
@@ -1060,12 +1061,14 @@ function setAlbumArtImage(image) {
 }
 
 function setStatusMessage(message) {
-  if (state.renderedStatusMessage === message) {
+  const compact = getConnectionStatusLabel(state.connection, message);
+  if (state.renderedStatusMessage === compact && ui.connectionText.textContent === message) {
     return;
   }
 
+  ui.statusPrimary.textContent = compact;
   ui.connectionText.textContent = message;
-  state.renderedStatusMessage = message;
+  state.renderedStatusMessage = compact;
 }
 
 function scheduleImageWarmCache(tiles) {
@@ -1087,9 +1090,8 @@ function scheduleImageWarmCache(tiles) {
   }, 0);
 }
 
-  const compactStatus = getConnectionStatusLabel(state.connection, state.connectionDetail);
-  ui.statusPrimary.textContent = compactStatus;
-  state.renderedStatusMessage = compactStatus;
+function sameIndices(a, b) {
+  if (a.length !== b.length) {
     return false;
   }
 
@@ -1158,8 +1160,10 @@ function updateConnectionUi() {
   const disableControls = !canControlPlayback();
   ui.connectionIcon.className = 'icon ' + iconClass;
   ui.connectionIcon.classList.toggle('is-active', isActive);
+  const compactStatus = getConnectionStatusLabel(state.connection, state.connectionDetail);
+  ui.statusPrimary.textContent = compactStatus;
   ui.connectionText.textContent = state.connectionDetail;
-  state.renderedStatusMessage = state.connectionDetail;
+  state.renderedStatusMessage = compactStatus;
   ui.outputStateText.textContent = getOutputStateMessage();
   ui.btnPrev.disabled = disableControls;
   ui.btnPlayPause.disabled = disableControls;
