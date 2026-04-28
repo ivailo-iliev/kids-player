@@ -87,6 +87,10 @@ body {
   border-radius: 8px;
   object-fit: cover;
   background: var(--panel-bg);
+.tile {
+  cursor: pointer;
+}
+
   vertical-align: top;
 }
 
@@ -284,6 +288,14 @@ body {
 .controlButton:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.navButton:focus-visible,
+.controlButton:focus-visible,
+.trackListButton:focus-visible,
+.tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 @media (orientation: portrait) {
