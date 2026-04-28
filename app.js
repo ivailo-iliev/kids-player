@@ -92,7 +92,7 @@ const STATUS_ICON_CLASSES = {
 const GENRES_PLACEHOLDER =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320'><rect width='320' height='320' fill='#1f1f1f'/><circle cx='160' cy='160' r='112' fill='#111'/><path fill='#9e9e9e' d='M162 216c12-12 12-29 12-48v-86h37v-24h-55v78c-4-2-9-4-13-4-17 0-30 12-30 30s13 30 30 30c17 0 30-13 30-30zm-2 67c-28 0-53-11-73-30-19-20-30-45-30-73s11-53 30-73c20-19 45-30 73-30s53 11 73 30c19 20 30 45 30 73s-11 53-30 73c-20 19-45 30-73 30z'/></svg>"
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 -960 960 960'><rect width='960' height='960' fill='#1f1f1f'/><path fill='#9e9e9e' d='M120-280v-80h120v80H120Zm0-160v-80h80v80h-80Zm0-160v-80h120v80H120Zm200 280v-120l200-120v-120h80v167l120 73v120L520-200v-160l-120 71Zm280 27 40-23-120-70-120 70 40 23 80-47 80 47Zm-40 173v-120h80v120h-80Z'/></svg>"
   );
 
 const TILE_IMAGE_SIZE = 100;
