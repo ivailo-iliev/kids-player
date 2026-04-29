@@ -151,9 +151,7 @@ const ui = {
   navPrev: document.getElementById('navPrev'),
   navNext: document.getElementById('navNext'),
   connectionIcon: document.getElementById('connectionIcon'),
-  statusPrimary: document.getElementById('statusPrimary'),
-  connectionText: document.getElementById('connectionText'),
-  outputStateText: document.getElementById('outputStateText'),
+  statusText: document.getElementById('statusText'),
   albumArt: document.getElementById('albumArt'),
   trackList: document.getElementById('trackList'),
   btnCast: document.getElementById('btnCast'),
@@ -553,19 +551,18 @@ function canControlPlayback() {
 
 function getOutputStateMessage() {
   const localAvailable = !state.playbackUnsupported && !!state.deviceId;
-  const localText = localAvailable ? 'Local available' : 'Local unavailable';
 
   if (state.playbackMode === PLAYBACK_MODES.LOCAL) {
-    return 'Output: Local playback (' + localText + ')';
+    return localAvailable ? 'Local' : 'Local (Unavailable)';
   }
 
   if (!state.availableDevices.length) {
-    return 'Output: Remote playback (No remote devices found)';
+    return 'Remote (None found)';
   }
   if (!state.activeRemoteDeviceId) {
-    return 'Output: Remote playback (No remote device selected)';
+    return 'Remote (Not selected)';
   }
-  return 'Output: Remote playback (' + (state.activeRemoteDeviceName || 'Remote device selected') + ')';
+  return 'Remote (' + (state.activeRemoteDeviceName || 'Selected') + ')';
 }
 
 async function refreshAvailableDevices() {
@@ -1062,13 +1059,13 @@ function setAlbumArtImage(image) {
 
 function setStatusMessage(message) {
   const compact = getConnectionStatusLabel(state.connection, message);
-  if (state.renderedStatusMessage === compact && ui.connectionText.textContent === message) {
+  const fullStatus = compact + ' • ' + getOutputStateMessage();
+  if (state.renderedStatusMessage === fullStatus) {
     return;
   }
 
-  ui.statusPrimary.textContent = compact;
-  ui.connectionText.textContent = message;
-  state.renderedStatusMessage = compact;
+  ui.statusText.textContent = fullStatus;
+  state.renderedStatusMessage = fullStatus;
 }
 
 function scheduleImageWarmCache(tiles) {
@@ -1161,10 +1158,9 @@ function updateConnectionUi() {
   ui.connectionIcon.className = 'icon ' + iconClass;
   ui.connectionIcon.classList.toggle('is-active', isActive);
   const compactStatus = getConnectionStatusLabel(state.connection, state.connectionDetail);
-  ui.statusPrimary.textContent = compactStatus;
-  ui.connectionText.textContent = state.connectionDetail;
-  state.renderedStatusMessage = compactStatus;
-  ui.outputStateText.textContent = getOutputStateMessage();
+  const fullStatus = compactStatus + ' • ' + getOutputStateMessage();
+  ui.statusText.textContent = fullStatus;
+  state.renderedStatusMessage = fullStatus;
   ui.btnPrev.disabled = disableControls;
   ui.btnPlayPause.disabled = disableControls;
   ui.btnNext.disabled = disableControls;
