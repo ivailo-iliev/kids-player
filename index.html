@@ -15,9 +15,9 @@
   </head>
   <body>
     <div id="app">
-      <div id="leftPanel" aria-label="Favorites panel">
+      <div id="tilePanel" aria-label="Favorites panel">
         <div id="tileGrid" role="listbox" aria-label="Favorite items"></div>
-        <div id="leftPanelNav">
+        <div id="tilePanelNav">
           <button id="navPrev" class="navButton" aria-label="Previous tile">
             <span class="icon icon-arrow-back" aria-hidden="true"></span>
           </button>
@@ -27,17 +27,12 @@
         </div>
       </div>
 
-      <div id="rightPanel" aria-label="Now playing panel">
-        <div id="connectionRow">
-          <span id="connectionIcon" class="icon icon-connecting" aria-hidden="true"></span>
-          <span id="statusPrimary">Connecting</span>
-          <span id="connectionText">Connecting to Spotify...</span>
-        </div>
-        <div id="outputStateText">Output: Local playback</div>
+      <div id="playerPanel" aria-label="Now playing panel">
+        <div id="nowPlayingHeader">
+          <img id="albumArt" alt="Current album art" width="160" height="160" decoding="async" />
 
-        <img id="albumArt" alt="Current album art" width="160" height="160" decoding="async" />
-
-        <div id="controls" aria-label="Playback controls">
+          <div id="playerMeta">
+            <div id="controls" aria-label="Playback controls">
           <button id="btnCast" class="controlButton" aria-label="Choose playback output">
             <span class="icon icon-connected" aria-hidden="true"></span>
           </button>
@@ -50,6 +45,12 @@
           <button id="btnNext" class="controlButton" aria-label="Next song">
             <span class="icon icon-skip-next" aria-hidden="true"></span>
           </button>
+            </div>
+            <div id="statusBar">
+              <span id="connectionIcon" class="icon icon-connecting" aria-hidden="true"></span>
+              <span id="statusText">Connecting • Local</span>
+            </div>
+          </div>
         </div>
 
         <ul id="trackList" aria-label="Current playlist"></ul>
