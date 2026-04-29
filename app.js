@@ -838,9 +838,6 @@ function renderTiles() {
     return;
   }
 
-  if (img.tabIndex !== (selected ? 0 : -1)) {
-    img.tabIndex = selected ? 0 : -1;
-  }
   const visibleIndices = getWindowedIndices(state.favoritesTiles.length, state.selectedTileIndex, MAX_RENDERED_TILES);
   const needsRebuild =
     state.tileNodes.length !== visibleIndices.length ||
@@ -900,6 +897,9 @@ function applyTileNodeState(img, tileIndex, tile, selected) {
   }
   if (img.getAttribute('aria-selected') !== (selected ? 'true' : 'false')) {
     img.setAttribute('aria-selected', selected ? 'true' : 'false');
+  }
+  if (img.tabIndex !== (selected ? 0 : -1)) {
+    img.tabIndex = selected ? 0 : -1;
   }
 }
 
