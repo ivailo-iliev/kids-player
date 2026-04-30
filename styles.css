@@ -45,6 +45,13 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
 #playerPanel { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--gap); align-content: start; min-block-size: 0; overflow: auto; }
 #nowPlayingHeader { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); align-items: stretch; }
 #playerMeta { display: grid; grid-template-rows: auto auto; gap: var(--gap); min-inline-size: 0; align-content: stretch; }
+#trackMeta { min-inline-size: 0; }
+#trackArtist { color: var(--text-muted); font-size: clamp(0.75rem, 1.8vmin, 0.95rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#trackTitle { font-size: clamp(1rem, 2.6vmin, 1.45rem); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#progressRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--gap); align-items: center; }
+#progressBar { block-size: 0.55rem; border-radius: 999px; background: #252525; overflow: hidden; border: 1px solid #2f2f2f; }
+#progressFill { block-size: 100%; inline-size: 0%; background: var(--accent); transition: inline-size 200ms linear; transform-origin: left center; }
+.compactControlButton { inline-size: auto; min-inline-size: 2.2rem; aspect-ratio: auto; block-size: 2rem; padding: 0 0.5rem; font-size: 1rem; font-weight: 700; line-height: 1; }
 #statusBar { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: clamp(0.75rem, 1.8vmin, 0.95rem); line-height: 1.2; }
 #statusText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #statusBar { min-inline-size: 0; }
