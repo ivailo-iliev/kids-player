@@ -39,9 +39,6 @@
               <button id="btnRestart" class="controlButton compactControlButton" aria-label="Restart song">↺</button>
             </div>
             <div id="controls" aria-label="Playback controls">
-          <button id="btnCast" class="controlButton" aria-label="Choose playback output">
-            <span class="icon icon-connected" aria-hidden="true"></span>
-          </button>
           <button id="btnPrev" class="controlButton" aria-label="Previous song">
             <span class="icon icon-skip-previous" aria-hidden="true"></span>
           </button>
@@ -58,6 +55,8 @@
         <ul id="trackList" aria-label="Current playlist"></ul>
       </div>
     </div>
+
+    <div id="connectionStatus" aria-live="polite" aria-atomic="true"></div>
 
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script src="/app.js"></script>
