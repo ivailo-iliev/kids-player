@@ -1,5 +1,5 @@
-const CACHE_NAME = 'kids-player-v6';
-const IMAGE_CACHE_NAME = 'kids-player-images-v4';
+const CACHE_NAME = 'kids-player-v7';
+const IMAGE_CACHE_NAME = 'kids-player-images';
 const APP_SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/assets/icons/app-192.svg', '/assets/icons/app-512.svg'];
 
 self.addEventListener('install', (event) => {
@@ -12,13 +12,22 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((key) => key !== CACHE_NAME && key !== IMAGE_CACHE_NAME)
+          .filter((key) => key !== CACHE_NAME && !key.startsWith('kids-player-images'))
           .map((key) => caches.delete(key))
       )
     )
   );
   self.clients.claim();
 });
+
+
+function getImageCacheKey(requestUrl, isSpotifyImage) {
+  if (!isSpotifyImage) {
+    return requestUrl.toString();
+  }
+
+  return requestUrl.origin + requestUrl.pathname;
+}
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
@@ -39,14 +48,15 @@ self.addEventListener('fetch', (event) => {
   if (isImageRequest || isSpotifyImage) {
     event.respondWith(
       caches.open(IMAGE_CACHE_NAME).then(async (cache) => {
-        const cached = await cache.match(event.request);
+        const cacheKey = getImageCacheKey(url, isSpotifyImage);
+        const cached = await cache.match(cacheKey);
         if (cached) {
           return cached;
         }
 
         const response = await fetch(event.request);
         if (response && response.ok) {
-          cache.put(event.request, response.clone());
+          cache.put(cacheKey, response.clone());
         }
         return response;
       })

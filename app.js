@@ -98,7 +98,6 @@ const GENRES_PLACEHOLDER =
 const TILE_IMAGE_SIZE = 100;
 const TILE_IMAGE_DOWNLOAD_SIZE = 100;
 const ALBUM_ART_IMAGE_SIZE = 160;
-const IMAGE_CACHE_WARM_BATCH = 24;
 const MAX_RENDERED_TRACKS = 40;
 
 const state = {
@@ -1025,8 +1024,7 @@ function scheduleImageWarmCache(tiles) {
 
   const allImages = tileSource
     .map((tile) => tile.image)
-    .filter((url) => !!url)
-    .slice(0, IMAGE_CACHE_WARM_BATCH);
+    .filter((url) => !!url);
 
   window.setTimeout(() => {
     allImages.forEach((url) => {
