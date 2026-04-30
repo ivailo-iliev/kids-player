@@ -52,7 +52,7 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
 #albumArt { inline-size: 100%; block-size: auto; object-fit: cover; border-radius: var(--radius); background: var(--panel-bg); border: 1px solid var(--panel-border); display: block; }
 #controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: var(--gap); inline-size: 100%; }
 .controlButton, .trackListButton { border: 1px solid #2a2a2a; background: var(--panel-bg); color: var(--text); border-radius: 6px; cursor: pointer; }
-.controlButton { inline-size: 100%; block-size: clamp(3rem, 7vmin, 4.25rem); padding: 0; }
+.controlButton { inline-size: 100%; aspect-ratio: 1 / 1; block-size: auto; padding: 0; }
 .icon { display: inline-block; inline-size: var(--icon-size); block-size: var(--icon-size); background-image: var(--icon-image); background-size: contain; background-repeat: no-repeat; background-position: center; }
 .trackListButton { width: 100%; text-align: left; padding: 8px; }
 .trackListButton.is-selected { border-color: var(--accent); }
