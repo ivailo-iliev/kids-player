@@ -5,7 +5,7 @@
   --portrait-player-ratio: 0.36;
   --player-min: clamp(24rem, 35vmin, 28rem);
   --player-max: clamp(30rem, 42vmin, 36rem);
-  --art-size: clamp(7rem, 18vmin, 12rem);
+  --art-size: clamp(5.5rem, 14vmin, 9rem);
   --control-size: clamp(2.2rem, 5.4vmin, 3.6rem);
   --icon-size: clamp(1.25rem, 2.6vmin, 1.8rem);
   --tile-min: clamp(4.5rem, 10vmin, 5.5rem);
@@ -43,20 +43,16 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
 .tile { inline-size: 100%; block-size: auto; border: 2px solid transparent; border-radius: var(--radius); object-fit: cover; background: var(--panel-bg); cursor: pointer; display: block; }
 .tile.selected { border-color: var(--accent); }
 #playerPanel { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--gap); align-content: start; min-block-size: 0; overflow: auto; }
-#nowPlayingHeader { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); align-items: stretch; }
-#playerMeta { display: grid; grid-template-rows: auto auto; gap: var(--gap); min-inline-size: 0; align-content: stretch; }
-#trackMeta { min-inline-size: 0; }
+#nowPlayingHeader { display: grid; grid-template-columns: minmax(0, var(--art-size)) minmax(0, 1fr); gap: var(--gap); align-items: stretch; }
+#playerMeta { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: var(--gap); min-inline-size: 0; align-content: stretch; block-size: 100%; }
+#trackMeta { min-inline-size: 0; display: grid; align-content: end; }
 #trackArtist { color: var(--text-muted); font-size: clamp(0.75rem, 1.8vmin, 0.95rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #trackTitle { font-size: clamp(1rem, 2.6vmin, 1.45rem); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #progressRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--gap); align-items: center; }
 #progressBar { block-size: 0.55rem; border-radius: 999px; background: #252525; overflow: hidden; border: 1px solid #2f2f2f; }
 #progressFill { block-size: 100%; inline-size: 0%; background: var(--accent); transition: inline-size 200ms linear; transform-origin: left center; }
 .compactControlButton { inline-size: auto; min-inline-size: 2.2rem; aspect-ratio: auto; block-size: 2rem; padding: 0 0.5rem; font-size: 1rem; font-weight: 700; line-height: 1; }
-#statusBar { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: clamp(0.75rem, 1.8vmin, 0.95rem); line-height: 1.2; }
-#statusText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#statusBar { min-inline-size: 0; }
-#connectionIcon { inline-size: 1.05rem; block-size: 1.05rem; }
-#albumArt { inline-size: 100%; block-size: auto; object-fit: cover; border-radius: var(--radius); background: var(--panel-bg); border: 1px solid var(--panel-border); display: block; }
+#albumArt { inline-size: 100%; block-size: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: var(--radius); background: var(--panel-bg); border: 1px solid var(--panel-border); display: block; }
 #controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: var(--gap); inline-size: 100%; }
 .controlButton, .trackListButton { border: 1px solid #2a2a2a; background: var(--panel-bg); color: var(--text); border-radius: 6px; cursor: pointer; }
 .controlButton { inline-size: 100%; aspect-ratio: 1 / 1; block-size: auto; padding: 0; }
@@ -86,3 +82,7 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
   #playerPanel { grid-column: 2; }
   #tileGrid { grid-template-columns: repeat(auto-fit, minmax(clamp(var(--tile-min), 15dvh, var(--tile-max)), 1fr)); }
 }
+
+.devicePickerStatus { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: clamp(0.75rem, 1.8vmin, 0.95rem); line-height: 1.2; padding: 4px 2px; }
+.devicePickerStatusText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.devicePickerConnectionIcon { inline-size: 1.05rem; block-size: 1.05rem; }
