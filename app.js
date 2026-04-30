@@ -99,6 +99,7 @@ const TILE_IMAGE_SIZE = 100;
 const TILE_IMAGE_DOWNLOAD_SIZE = 100;
 const ALBUM_ART_IMAGE_SIZE = 160;
 const MAX_RENDERED_TRACKS = 40;
+const PREVIOUS_TRACK_STORAGE_KEY = 'previous_track';
 
 const state = {
   accessToken: null,
@@ -142,6 +143,9 @@ const state = {
   renderedStatusMessage: '',
   renderedTrackTitle: '',
   renderedTrackArtist: '',
+  previousTrackName: '',
+  lastKnownTrackUri: '',
+  currentTrackNameForPrevious: '',
   progressDurationMs: 0,
   progressPositionMs: 0,
   progressLastUpdateMs: 0,
@@ -159,6 +163,7 @@ const ui = {
   btnNext: document.getElementById('btnNext'),
   playPauseIcon: document.getElementById('playPauseIcon'),
   trackTitle: document.getElementById('trackTitle'),
+  previousTrack: document.getElementById('previousTrack'),
   trackArtist: document.getElementById('trackArtist'),
   progressBar: document.getElementById('progressBar'),
   progressFill: document.getElementById('progressFill'),
@@ -331,6 +336,9 @@ async function init() {
   }
 
   bindUiEvents();
+  const savedPreviousTrack = getStorageItem(PREVIOUS_TRACK_STORAGE_KEY);
+  state.previousTrackName = savedPreviousTrack ? savedPreviousTrack : '';
+  renderPreviousTrack();
   setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
@@ -988,18 +996,38 @@ function clearTrackList() {
   ui.trackList.innerHTML = '';
 }
 
+function renderPreviousTrack() {
+  ui.previousTrack.textContent = 'Previous: ' + (state.previousTrackName || '—');
+}
+
 function updateTrackListFromPlayerState(sdkState) {
   const currentTrack = sdkState.track_window && sdkState.track_window.current_track;
 
   if (!currentTrack) {
     clearTrackList();
     setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
+    state.lastKnownTrackUri = '';
     setTrackMeta('', '');
     setPlaybackProgress(0, 0, false);
     return;
   }
 
   setStatusMessage(state.connectionDetail);
+  const currentUri = currentTrack.uri || '';
+  if (state.lastKnownTrackUri && currentUri && state.lastKnownTrackUri !== currentUri) {
+    const previousName = state.currentTrackNameForPrevious || '';
+    if (previousName !== state.previousTrackName) {
+      state.previousTrackName = previousName;
+      renderPreviousTrack();
+      try {
+        setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, state.previousTrackName);
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+  }
+  state.lastKnownTrackUri = currentUri;
+  state.currentTrackNameForPrevious = currentTrack.name || '';
   const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
   setTrackMeta(currentTrack.name || '', artistName);
   setPlaybackProgress(sdkState.position || 0, currentTrack.duration_ms || 0, !sdkState.paused);
