@@ -151,8 +151,6 @@ const state = {
 
 const ui = {
   tileGrid: document.getElementById('tileGrid'),
-  connectionIcon: document.getElementById('connectionIcon'),
-  statusText: document.getElementById('statusText'),
   albumArt: document.getElementById('albumArt'),
   trackList: document.getElementById('trackList'),
   btnCast: document.getElementById('btnCast'),
@@ -556,6 +554,11 @@ function getOutputStateMessage() {
   return 'Remote (' + (state.activeRemoteDeviceName || 'Selected') + ')';
 }
 
+function getConnectionSummary() {
+  const compactStatus = getConnectionStatusLabel(state.connection, state.connectionDetail);
+  return compactStatus + ' • ' + getOutputStateMessage();
+}
+
 async function refreshAvailableDevices() {
   const data = await spotifyGet('/me/player/devices', { allowResourceErrors: true });
   const devices = data && data.devices ? data.devices : [];
@@ -586,6 +589,19 @@ async function refreshAvailableDevices() {
 
 function renderDevicePickerInTrackList() {
   ui.trackList.innerHTML = '';
+
+  const statusNode = document.createElement('li');
+  statusNode.className = 'devicePickerStatus';
+  const statusIcon = document.createElement('span');
+  statusIcon.className = 'icon devicePickerConnectionIcon ' + (STATUS_ICON_CLASSES[state.connection] || STATUS_ICON_CLASSES[CONNECTION_STATES.DISCONNECTED]);
+  statusIcon.classList.toggle('is-active', state.connection === CONNECTION_STATES.CONNECTED);
+  statusIcon.setAttribute('aria-hidden', 'true');
+  const statusTextNode = document.createElement('span');
+  statusTextNode.className = 'devicePickerStatusText';
+  statusTextNode.textContent = getConnectionSummary();
+  statusNode.appendChild(statusIcon);
+  statusNode.appendChild(statusTextNode);
+  ui.trackList.appendChild(statusNode);
 
   const localOption = document.createElement('li');
   const localButton = document.createElement('button');
@@ -1108,8 +1124,10 @@ function setStatusMessage(message) {
     return;
   }
 
-  ui.statusText.textContent = fullStatus;
   state.renderedStatusMessage = fullStatus;
+  if (state.devicePickerOpen) {
+    renderDevicePickerInTrackList();
+  }
 }
 
 function scheduleImageWarmCache(tiles) {
@@ -1195,15 +1213,12 @@ function transitionConnection(nextState, detail) {
 }
 
 function updateConnectionUi() {
-  const iconClass = STATUS_ICON_CLASSES[state.connection] || STATUS_ICON_CLASSES[CONNECTION_STATES.DISCONNECTED];
-  const isActive = state.connection === CONNECTION_STATES.CONNECTED;
   const disableControls = !canControlPlayback();
-  ui.connectionIcon.className = 'icon ' + iconClass;
-  ui.connectionIcon.classList.toggle('is-active', isActive);
-  const compactStatus = getConnectionStatusLabel(state.connection, state.connectionDetail);
-  const fullStatus = compactStatus + ' • ' + getOutputStateMessage();
-  ui.statusText.textContent = fullStatus;
+  const fullStatus = getConnectionSummary();
   state.renderedStatusMessage = fullStatus;
+  if (state.devicePickerOpen) {
+    renderDevicePickerInTrackList();
+  }
   ui.btnPrev.disabled = disableControls;
   ui.btnPlayPause.disabled = disableControls;
   ui.btnNext.disabled = disableControls;
