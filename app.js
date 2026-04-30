@@ -124,6 +124,7 @@ const state = {
   queueSyncPending: false,
   queueSyncCurrentTrack: null,
   lastPlayerState: null,
+  currentContextUri: '',
   renderedAlbumArtSrc: '',
   renderedStatusMessage: '',
   renderedTrackTitle: '',
@@ -399,6 +400,8 @@ async function init() {
 
 function bindUiEvents() {
   ui.tileGrid.addEventListener('click', onTileGridClick);
+  ui.previousTrack.addEventListener('click', onPreviousTrackClick);
+  ui.trackList.addEventListener('click', onTrackListClick);
 
   ui.btnPlayPause.addEventListener('click', onTogglePlayPause);
   ui.btnPrev.addEventListener('click', () => onTrackStep(-1));
@@ -486,6 +489,28 @@ async function onTileGridClick(event) {
   state.selectedTileIndex = tileIndex;
   updateSelectedTileUi(previousIndex, state.selectedTileIndex);
   await playSelectedTile();
+}
+
+async function onPreviousTrackClick() {
+  if (!ui.previousTrack || ui.previousTrack.hidden) {
+    return;
+  }
+
+  await playSavedPreviousTrack();
+}
+
+async function onTrackListClick(event) {
+  const trackNode = event.target.closest('.trackListItem');
+  if (!trackNode || !ui.trackList.contains(trackNode)) {
+    return;
+  }
+
+  const trackIndex = Number(trackNode.dataset.index);
+  if (Number.isNaN(trackIndex)) {
+    return;
+  }
+
+  await playTrackAtIndex(trackIndex);
 }
 
 function canControlPlayback() {
@@ -813,6 +838,7 @@ function updateTrackList() {
       const thumb = document.createElement('img');
       const label = document.createElement('span');
       li.className = 'trackListItem';
+      li.dataset.index = String(trackIndex);
       thumb.className = 'trackListThumb';
       thumb.alt = '';
       thumb.decoding = 'async';
@@ -989,6 +1015,7 @@ function updateTrackListFromPlayerState(sdkState) {
   }
   state.lastKnownTrackUri = currentUri;
   state.currentTrackForPrevious = normalizePlayerTrack(currentTrack);
+  state.currentContextUri = sdkState.context && sdkState.context.uri ? sdkState.context.uri : '';
   state.activePlaybackDeviceId = state.deviceId || '';
   const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
   setTrackMeta(currentTrack.name || '', artistName);
@@ -1079,7 +1106,7 @@ async function syncQueueState(currentTrack) {
     const currentUri = state.queueSyncCurrentTrack && state.queueSyncCurrentTrack.uri ? state.queueSyncCurrentTrack.uri : '';
     const nextQueueTracks =
       currentUri && queueTracks.length && queueTracks[0].uri === currentUri ? queueTracks.slice(1) : queueTracks;
-    state.currentList = nextQueueTracks;
+    state.currentList = dedupeTracksByUri(nextQueueTracks);
     state.currentIndex = 0;
     updateTrackList();
   } finally {
@@ -1093,6 +1120,23 @@ async function syncQueueState(currentTrack) {
 
 function normalizeQueueTrack(track) {
   return normalizePlayerTrack(track);
+}
+
+function dedupeTracksByUri(tracks) {
+  const seen = new Set();
+  const uniqueTracks = [];
+
+  for (let i = 0; i < tracks.length; i += 1) {
+    const track = tracks[i];
+    const uri = track && track.uri ? track.uri : '';
+    if (!uri || seen.has(uri)) {
+      continue;
+    }
+    seen.add(uri);
+    uniqueTracks.push(track);
+  }
+
+  return uniqueTracks;
 }
 
 function setAlbumArtImage(image) {
@@ -1488,7 +1532,7 @@ async function playTrackAtIndex(index) {
     return;
   }
 
-  await playTrackUri(track.uri);
+  await playTrackFromCurrentContext(track.uri);
   updateTrackList();
 }
 
@@ -1640,6 +1684,41 @@ async function playContextUri(contextUri) {
     await setPlaybackRepeatMode('off');
     return;
   }
+}
+
+async function playTrackFromCurrentContext(trackUri) {
+  const deviceId = state.deviceId;
+  const contextUri = state.currentContextUri || '';
+  if (!deviceId || !trackUri || !contextUri) {
+    return playTrackUri(trackUri);
+  }
+
+  const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
+  if (!tookOver) {
+    return false;
+  }
+
+  const body = JSON.stringify({
+    context_uri: contextUri,
+    offset: { uri: trackUri },
+    position_ms: 0
+  });
+
+  const response = await spotifyWrite('/me/player/play?device_id=' + encodeURIComponent(deviceId), {
+    method: 'PUT',
+    body,
+    includeJsonContentType: true
+  });
+
+  if (response.ok) {
+    await refreshPlaybackState();
+    setPlayingState(true);
+    state.activePlaybackDeviceId = state.deviceId;
+    await setPlaybackRepeatMode('context');
+    return true;
+  }
+
+  return false;
 }
 
 async function playTrackUri(trackUri) {
