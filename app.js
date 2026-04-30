@@ -1108,7 +1108,7 @@ function renderPreviousTrack() {
     return;
   }
 
-  const previousTrackText = 'Previous: ' + (state.previousTrackName || 'Unknown track');
+  const previousTrackText = state.previousTrackName || 'Unknown track';
   if (ui.previousTrackText.textContent !== previousTrackText) {
     ui.previousTrackText.textContent = previousTrackText;
   }
