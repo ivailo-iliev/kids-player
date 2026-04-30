@@ -167,6 +167,9 @@ const ui = {
   btnPlayPause: document.getElementById('btnPlayPause'),
   btnNext: document.getElementById('btnNext'),
   playPauseIcon: document.getElementById('playPauseIcon'),
+  previousTrack: document.getElementById('previousTrack'),
+  previousTrackImage: document.getElementById('previousTrackImage'),
+  previousTrackText: document.getElementById('previousTrackText'),
   trackTitle: document.getElementById('trackTitle'),
   trackArtist: document.getElementById('trackArtist'),
   progressBar: document.getElementById('progressBar'),
@@ -1071,6 +1074,7 @@ function loadPreviousTrackFromStorage() {
   state.previousTrackImage = savedPreviousTrack.image;
   state.previousTrackImageWidth = savedPreviousTrack.imageWidth;
   state.previousTrackImageHeight = savedPreviousTrack.imageHeight;
+  renderPreviousTrack();
 }
 
 function savePreviousTrack(track) {
@@ -1087,12 +1091,34 @@ function savePreviousTrack(track) {
   state.previousTrackImage = previousTrack.image;
   state.previousTrackImageWidth = previousTrack.imageWidth;
   state.previousTrackImageHeight = previousTrack.imageHeight;
+  renderPreviousTrack();
 
   try {
     setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, JSON.stringify(previousTrack));
   } catch (error) {
     console.warn(error);
   }
+}
+
+function renderPreviousTrack() {
+  const hasPreviousTrack = !!(state.previousTrackName || state.previousTrackImage || state.previousTrackUri);
+
+  ui.previousTrack.hidden = !hasPreviousTrack;
+  if (!hasPreviousTrack) {
+    return;
+  }
+
+  const previousTrackText = 'Previous: ' + (state.previousTrackName || 'Unknown track');
+  if (ui.previousTrackText.textContent !== previousTrackText) {
+    ui.previousTrackText.textContent = previousTrackText;
+  }
+
+  const previousTrackImage = state.previousTrackImage || createFallbackImage(TRACK_THUMBNAIL_SIZE).url;
+  if (ui.previousTrackImage.src !== previousTrackImage) {
+    ui.previousTrackImage.src = previousTrackImage;
+  }
+  ui.previousTrackImage.width = state.previousTrackImageWidth || TRACK_THUMBNAIL_SIZE;
+  ui.previousTrackImage.height = state.previousTrackImageHeight || TRACK_THUMBNAIL_SIZE;
 }
 
 async function playSavedPreviousTrack() {
