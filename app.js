@@ -679,6 +679,9 @@ function closeDevicePicker() {
   state.devicePickerOpen = false;
   state.devicePickerRequestId += 1;
   ui.btnCast.classList.remove('is-active');
+  state.trackNodes = [];
+  state.trackNodeIndices = [];
+  ui.trackList.innerHTML = '';
   updateTrackList();
 }
 
