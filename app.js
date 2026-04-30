@@ -68,6 +68,16 @@ const ALLOWED_CONNECTION_TRANSITIONS = {
   ])
 };
 
+const STATUS_ICON_CLASSES = {
+  [CONNECTION_STATES.INIT]: 'icon-connecting',
+  [CONNECTION_STATES.AUTHORIZING]: 'icon-connecting',
+  [CONNECTION_STATES.CONNECTING]: 'icon-connecting',
+  [CONNECTION_STATES.CONNECTED]: 'icon-connected',
+  [CONNECTION_STATES.DISCONNECTED]: 'icon-disconnected',
+  [CONNECTION_STATES.TOKEN_EXPIRED]: 'icon-disconnected',
+  [CONNECTION_STATES.ERROR]: 'icon-disconnected'
+};
+
 const GENRES_PLACEHOLDER =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
@@ -139,6 +149,8 @@ const ui = {
   btnNext: document.getElementById('btnNext'),
   playPauseIcon: document.getElementById('playPauseIcon'),
   connectionStatus: document.getElementById('connectionStatus'),
+  connectionStatusIcon: document.getElementById('connectionStatusIcon'),
+  connectionStatusText: document.getElementById('connectionStatusText'),
   previousTrack: document.getElementById('previousTrack'),
   previousTrackImage: document.getElementById('previousTrackImage'),
   previousTrackText: document.getElementById('previousTrackText'),
@@ -966,7 +978,10 @@ async function syncQueueState(currentTrack) {
   try {
     const queueData = await spotifyGet('/me/player/queue', { allowResourceErrors: true });
     const queueTracks = queueData && queueData.queue ? queueData.queue.map(normalizeQueueTrack) : [];
-    state.currentList = [state.queueSyncCurrentTrack].concat(queueTracks);
+    const currentUri = state.queueSyncCurrentTrack && state.queueSyncCurrentTrack.uri ? state.queueSyncCurrentTrack.uri : '';
+    const nextQueueTracks =
+      currentUri && queueTracks.length && queueTracks[0].uri === currentUri ? queueTracks.slice(1) : queueTracks;
+    state.currentList = nextQueueTracks;
     state.currentIndex = 0;
     updateTrackList();
   } finally {
@@ -1001,7 +1016,14 @@ function setStatusMessage(message) {
 
   state.renderedStatusMessage = fullStatus;
   if (ui.connectionStatus) {
-    ui.connectionStatus.textContent = fullStatus;
+    if (ui.connectionStatusText) {
+      ui.connectionStatusText.textContent = fullStatus;
+    }
+    if (ui.connectionStatusIcon) {
+      const iconClass = STATUS_ICON_CLASSES[state.connection] || STATUS_ICON_CLASSES[CONNECTION_STATES.DISCONNECTED];
+      ui.connectionStatusIcon.className = 'icon connectionStatusIcon ' + iconClass;
+      ui.connectionStatusIcon.classList.toggle('is-active', state.connection === CONNECTION_STATES.CONNECTED);
+    }
   }
 }
 

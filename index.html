@@ -56,7 +56,10 @@
       </div>
     </div>
 
-    <div id="connectionStatus" aria-live="polite" aria-atomic="true"></div>
+    <div id="connectionStatus" aria-live="polite" aria-atomic="true">
+      <span id="connectionStatusIcon" class="icon connectionStatusIcon icon-connected" aria-hidden="true"></span>
+      <span id="connectionStatusText"></span>
+    </div>
 
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script src="/app.js"></script>
