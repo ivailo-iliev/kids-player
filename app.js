@@ -123,6 +123,7 @@ const state = {
   queueSyncInFlight: false,
   queueSyncPending: false,
   queueSyncCurrentTrack: null,
+  lastPlayerState: null,
   renderedAlbumArtSrc: '',
   renderedStatusMessage: '',
   renderedTrackTitle: '',
@@ -518,6 +519,39 @@ async function transferPlaybackToLocalDevice(shouldPlay) {
   return true;
 }
 
+async function setPlaybackRepeatMode(mode) {
+  const deviceId = state.deviceId;
+  if (!deviceId) {
+    return false;
+  }
+
+  const response = await spotifyWrite('/me/player/repeat?state=' + encodeURIComponent(mode) + '&device_id=' + encodeURIComponent(deviceId), {
+    method: 'PUT',
+    suppressReconnect: true
+  });
+
+  return !!response.ok;
+}
+
+function getSpotifyPreviousTrack() {
+  const previousTracks = state.lastPlayerState &&
+    state.lastPlayerState.track_window &&
+    Array.isArray(state.lastPlayerState.track_window.previous_tracks)
+    ? state.lastPlayerState.track_window.previous_tracks
+    : [];
+  return previousTracks.length ? previousTracks[0] : null;
+}
+
+function getSpotifyPreviousTrackUri() {
+  const previousTrack = getSpotifyPreviousTrack();
+  return previousTrack && previousTrack.uri ? previousTrack.uri : '';
+}
+
+function shouldUseSpotifyPreviousTrack() {
+  const spotifyPreviousUri = getSpotifyPreviousTrackUri();
+  return !!(spotifyPreviousUri && state.previousTrackUri && spotifyPreviousUri === state.previousTrackUri);
+}
+
 function setPlayingState(isPlaying) {
   state.isPlaying = !!isPlaying;
   ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
@@ -563,10 +597,7 @@ async function playSelectedTile() {
   if (tile.type === 'song') {
     const started = await playTrackUri(tile.track.uri);
     if (started) {
-      state.currentList = [tile.track];
-      state.currentIndex = 0;
       state.currentSourceType = tile.type;
-      updateTrackList();
     }
     return;
   }
@@ -577,6 +608,7 @@ async function playSelectedTile() {
   state.currentSourceType = tile.type;
   clearTrackList();
   setAlbumArtImage(tileToAlbumArtImage(tile));
+  await setPlaybackRepeatMode('off');
 
   await playContextUri('spotify:' + tile.type + ':' + tile.id);
 }
@@ -593,14 +625,27 @@ async function onTrackStep(direction) {
     }
 
     await pauseForUi();
+    const localState = await state.player.getCurrentState();
+    if (localState) {
+      state.lastPlayerState = localState;
+    }
     await refreshPlaybackState();
 
     if (direction < 0) {
-      await playSavedPreviousTrack();
+      if (shouldUseSpotifyPreviousTrack()) {
+        await setPlaybackRepeatMode('off');
+        await state.player.previousTrack();
+        await state.player.resume();
+      } else {
+        await playSavedPreviousTrack();
+      }
     } else {
+      await setPlaybackRepeatMode('off');
       await state.player.nextTrack();
+      await state.player.resume();
     }
 
+    await pauseForUi();
     await refreshPlaybackState();
   } catch (error) {
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Playback device unavailable');
@@ -934,6 +979,7 @@ function updateTrackListFromPlayerState(sdkState) {
   }
 
   setStatusMessage(state.connectionDetail);
+  state.lastPlayerState = sdkState;
   const currentUri = currentTrack.uri || '';
   if (state.lastKnownTrackUri && currentUri && state.lastKnownTrackUri !== currentUri) {
     const previousTrack = state.currentTrackForPrevious || null;
@@ -1591,6 +1637,7 @@ async function playContextUri(contextUri) {
     await refreshPlaybackState();
     setPlayingState(true);
     state.activePlaybackDeviceId = state.deviceId;
+    await setPlaybackRepeatMode('off');
     return;
   }
 }
@@ -1621,6 +1668,7 @@ async function playTrackUri(trackUri) {
     await refreshPlaybackState();
     setPlayingState(true);
     state.activePlaybackDeviceId = state.deviceId;
+    await setPlaybackRepeatMode('context');
     return true;
   }
 
