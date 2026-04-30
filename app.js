@@ -98,8 +98,6 @@ const GENRES_PLACEHOLDER =
 const TILE_IMAGE_SIZE = 100;
 const TILE_IMAGE_DOWNLOAD_SIZE = 100;
 const ALBUM_ART_IMAGE_SIZE = 160;
-const IMAGE_CACHE_WARM_BATCH = 24;
-const MAX_RENDERED_TILES = 30;
 const MAX_RENDERED_TRACKS = 40;
 
 const state = {
@@ -787,7 +785,7 @@ async function onTogglePlayPause() {
 }
 
 function renderTiles() {
-  const visibleIndices = getWindowedIndices(state.favoritesTiles.length, state.selectedTileIndex, MAX_RENDERED_TILES);
+  const visibleIndices = getWindowedIndices(state.favoritesTiles.length, state.selectedTileIndex, state.favoritesTiles.length);
   const needsRebuild =
     state.tileNodes.length !== visibleIndices.length ||
     !sameIndices(state.tileNodeIndices, visibleIndices);
@@ -1026,8 +1024,7 @@ function scheduleImageWarmCache(tiles) {
 
   const allImages = tileSource
     .map((tile) => tile.image)
-    .filter((url) => !!url)
-    .slice(0, IMAGE_CACHE_WARM_BATCH);
+    .filter((url) => !!url);
 
   window.setTimeout(() => {
     allImages.forEach((url) => {
@@ -1909,21 +1906,9 @@ async function continueFavoritesPagination(path, mapper, followingArtists) {
     const data = await spotifyGet(nextPath.replace('https://api.spotify.com/v1', ''));
     const mapped = mapFavoritesPage(data, mapper, followingArtists);
     if (mapped.items.length) {
-      const previousVisibleIndices = getWindowedIndices(
-        state.favoritesTiles.length,
-        state.selectedTileIndex,
-        MAX_RENDERED_TILES
-      );
       state.favoritesTiles = state.favoritesTiles.concat(mapped.items);
       scheduleImageWarmCache(mapped.items);
-      const nextVisibleIndices = getWindowedIndices(
-        state.favoritesTiles.length,
-        state.selectedTileIndex,
-        MAX_RENDERED_TILES
-      );
-      if (!sameIndices(previousVisibleIndices, nextVisibleIndices)) {
-        renderTiles();
-      }
+      renderTiles();
     }
     nextPath = mapped.next;
     await pauseForUi();
