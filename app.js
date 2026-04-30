@@ -139,6 +139,7 @@ const ui = {
   btnNext: document.getElementById('btnNext'),
   playPauseIcon: document.getElementById('playPauseIcon'),
   connectionStatus: document.getElementById('connectionStatus'),
+  previousTrack: document.getElementById('previousTrack'),
   previousTrackImage: document.getElementById('previousTrackImage'),
   previousTrackText: document.getElementById('previousTrackText'),
   trackTitle: document.getElementById('trackTitle'),
