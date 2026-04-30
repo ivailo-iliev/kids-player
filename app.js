@@ -592,19 +592,15 @@ async function onTrackStep(direction) {
       return;
     }
 
+    await pauseForUi();
+    await refreshPlaybackState();
+
     if (direction < 0) {
-      await spotifyWrite('/me/player/previous', {
-        method: 'POST',
-        suppressReconnect: true
-      });
-      await refreshPlaybackState();
-      return;
+      await playSavedPreviousTrack();
+    } else {
+      await state.player.nextTrack();
     }
 
-    await spotifyWrite('/me/player/next', {
-      method: 'POST',
-      suppressReconnect: true
-    });
     await refreshPlaybackState();
   } catch (error) {
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Playback device unavailable');
