@@ -146,9 +146,11 @@ const state = {
   renderedTrackArtist: '',
   previousTrackName: '',
   previousTrackUri: '',
+  previousTrackImage: '',
+  previousTrackImageWidth: 0,
+  previousTrackImageHeight: 0,
   lastKnownTrackUri: '',
-  currentTrackUriForPrevious: '',
-  currentTrackNameForPrevious: '',
+  currentTrackForPrevious: null,
   progressDurationMs: 0,
   progressPositionMs: 0,
   progressLastUpdateMs: 0,
@@ -166,7 +168,6 @@ const ui = {
   btnNext: document.getElementById('btnNext'),
   playPauseIcon: document.getElementById('playPauseIcon'),
   trackTitle: document.getElementById('trackTitle'),
-  previousTrack: document.getElementById('previousTrack'),
   trackArtist: document.getElementById('trackArtist'),
   progressBar: document.getElementById('progressBar'),
   progressFill: document.getElementById('progressFill'),
@@ -1040,23 +1041,26 @@ function updateTrackListItem(node, track, isNowPlaying) {
 
 function parsePreviousTrackRecord(value) {
   if (!value) {
-    return { uri: '', name: '' };
+    return { uri: '', name: '', image: '', imageWidth: 0, imageHeight: 0 };
   }
 
   let parsed;
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    return { uri: '', name: '' };
+    return { uri: '', name: '', image: '', imageWidth: 0, imageHeight: 0 };
   }
 
   if (!parsed || typeof parsed !== 'object') {
-    return { uri: '', name: '' };
+    return { uri: '', name: '', image: '', imageWidth: 0, imageHeight: 0 };
   }
 
   return {
     uri: typeof parsed.uri === 'string' ? parsed.uri : '',
-    name: typeof parsed.name === 'string' ? parsed.name : ''
+    name: typeof parsed.name === 'string' ? parsed.name : '',
+    image: typeof parsed.image === 'string' ? parsed.image : '',
+    imageWidth: Number.isFinite(parsed.imageWidth) ? parsed.imageWidth : 0,
+    imageHeight: Number.isFinite(parsed.imageHeight) ? parsed.imageHeight : 0
   };
 }
 
@@ -1064,22 +1068,25 @@ function loadPreviousTrackFromStorage() {
   const savedPreviousTrack = parsePreviousTrackRecord(getStorageItem(PREVIOUS_TRACK_STORAGE_KEY));
   state.previousTrackName = savedPreviousTrack.name;
   state.previousTrackUri = savedPreviousTrack.uri;
-  renderPreviousTrack();
-}
-
-function renderPreviousTrack() {
-  ui.previousTrack.textContent = 'Previous: ' + (state.previousTrackName || '—');
+  state.previousTrackImage = savedPreviousTrack.image;
+  state.previousTrackImageWidth = savedPreviousTrack.imageWidth;
+  state.previousTrackImageHeight = savedPreviousTrack.imageHeight;
 }
 
 function savePreviousTrack(track) {
   const previousTrack = {
     uri: track && track.uri ? track.uri : '',
-    name: track && track.name ? track.name : ''
+    name: track && track.name ? track.name : '',
+    image: track && track.image ? track.image : '',
+    imageWidth: track && Number.isFinite(track.imageWidth) ? track.imageWidth : 0,
+    imageHeight: track && Number.isFinite(track.imageHeight) ? track.imageHeight : 0
   };
 
   state.previousTrackName = previousTrack.name;
   state.previousTrackUri = previousTrack.uri;
-  renderPreviousTrack();
+  state.previousTrackImage = previousTrack.image;
+  state.previousTrackImageWidth = previousTrack.imageWidth;
+  state.previousTrackImageHeight = previousTrack.imageHeight;
 
   try {
     setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, JSON.stringify(previousTrack));
@@ -1110,21 +1117,17 @@ function updateTrackListFromPlayerState(sdkState) {
   setStatusMessage(state.connectionDetail);
   const currentUri = currentTrack.uri || '';
   if (state.lastKnownTrackUri && currentUri && state.lastKnownTrackUri !== currentUri) {
-    const previousTrack = {
-      uri: state.currentTrackUriForPrevious || '',
-      name: state.currentTrackNameForPrevious || ''
-    };
+    const previousTrack = state.currentTrackForPrevious || null;
     if (previousTrack.uri || previousTrack.name) {
       savePreviousTrack(previousTrack);
     }
   }
   state.lastKnownTrackUri = currentUri;
-  state.currentTrackUriForPrevious = currentUri;
-  state.currentTrackNameForPrevious = currentTrack.name || '';
+  state.currentTrackForPrevious = normalizePlayerTrack(currentTrack);
   const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
   setTrackMeta(currentTrack.name || '', artistName);
   setPlaybackProgress(sdkState.position || 0, currentTrack.duration_ms || 0, !sdkState.paused);
-  syncQueueState(normalizePlayerTrack(currentTrack));
+  syncQueueState(state.currentTrackForPrevious);
 }
 
 function setTrackMeta(title, artist) {
