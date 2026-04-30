@@ -143,9 +143,9 @@ const state = {
   renderedStatusMessage: '',
   renderedTrackTitle: '',
   renderedTrackArtist: '',
-  renderedPreviousTrack: '',
+  previousTrackName: '',
   lastKnownTrackUri: '',
-  lastKnownTrackName: '',
+  currentTrackNameForPrevious: '',
   progressDurationMs: 0,
   progressPositionMs: 0,
   progressLastUpdateMs: 0,
@@ -338,7 +338,9 @@ async function init() {
   }
 
   bindUiEvents();
-  loadPreviousTrackFromStorage();
+  const savedPreviousTrack = getStorageItem(PREVIOUS_TRACK_STORAGE_KEY);
+  state.previousTrackName = savedPreviousTrack ? savedPreviousTrack : '';
+  ui.previousTrack.textContent = 'Previous: ' + (state.previousTrackName || '—');
   setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
@@ -985,68 +987,29 @@ function updateTrackListFromPlayerState(sdkState) {
     clearTrackList();
     setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
     state.lastKnownTrackUri = '';
-    state.lastKnownTrackName = '';
     setTrackMeta('', '');
     setPlaybackProgress(0, 0, false);
     return;
   }
 
   setStatusMessage(state.connectionDetail);
-  updatePreviousTrackFromCurrent(currentTrack);
+  const currentUri = currentTrack.uri || '';
+  if (state.lastKnownTrackUri && currentUri && state.lastKnownTrackUri !== currentUri) {
+    const previousName = state.currentTrackNameForPrevious || '';
+    if (previousName !== state.previousTrackName) {
+      state.previousTrackName = previousName;
+      ui.previousTrack.textContent = 'Previous: ' + (state.previousTrackName || '—');
+      setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, state.previousTrackName);
+    }
+  }
+  state.lastKnownTrackUri = currentUri;
+  state.currentTrackNameForPrevious = currentTrack.name || '';
   const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
   setTrackMeta(currentTrack.name || '', artistName);
   setPlaybackProgress(sdkState.position || 0, currentTrack.duration_ms || 0, !sdkState.paused);
   syncQueueState(normalizePlayerTrack(currentTrack));
 }
 
-
-function loadPreviousTrackFromStorage() {
-  const saved = getStorageItem(PREVIOUS_TRACK_STORAGE_KEY);
-  if (!saved) {
-    setPreviousTrack('');
-    return;
-  }
-
-  try {
-    const parsed = JSON.parse(saved);
-    const name = parsed && typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    setPreviousTrack(name);
-  } catch (error) {
-    console.warn('Invalid saved previous track value', error);
-    setPreviousTrack('');
-  }
-}
-
-function updatePreviousTrackFromCurrent(currentTrack) {
-  const currentUri = currentTrack && currentTrack.uri ? currentTrack.uri : '';
-  if (!currentUri) {
-    return;
-  }
-
-  if (state.lastKnownTrackUri && state.lastKnownTrackUri !== currentUri) {
-    setPreviousTrack(state.lastKnownTrackName);
-  }
-
-  state.lastKnownTrackUri = currentUri;
-  state.lastKnownTrackName = currentTrack && currentTrack.name ? currentTrack.name : '';
-}
-
-function setPreviousTrack(name) {
-  const trimmed = (name || '').trim();
-  const next = trimmed || '—';
-  const label = 'Previous: ' + next;
-
-  if (state.renderedPreviousTrack !== label) {
-    ui.previousTrack.textContent = label;
-    state.renderedPreviousTrack = label;
-  }
-
-  try {
-    setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, JSON.stringify({ name: trimmed }));
-  } catch (error) {
-    console.warn(error);
-  }
-}
 
 function setTrackMeta(title, artist) {
   const nextTitle = title || 'Nothing playing';
