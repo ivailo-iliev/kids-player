@@ -99,6 +99,7 @@ const TILE_IMAGE_SIZE = 100;
 const TILE_IMAGE_DOWNLOAD_SIZE = 100;
 const ALBUM_ART_IMAGE_SIZE = 160;
 const MAX_RENDERED_TRACKS = 40;
+const PREVIOUS_TRACK_STORAGE_KEY = 'previous_track';
 
 const state = {
   accessToken: null,
@@ -142,6 +143,9 @@ const state = {
   renderedStatusMessage: '',
   renderedTrackTitle: '',
   renderedTrackArtist: '',
+  renderedPreviousTrack: '',
+  lastKnownTrackUri: '',
+  lastKnownTrackName: '',
   progressDurationMs: 0,
   progressPositionMs: 0,
   progressLastUpdateMs: 0,
@@ -161,6 +165,7 @@ const ui = {
   btnNext: document.getElementById('btnNext'),
   playPauseIcon: document.getElementById('playPauseIcon'),
   trackTitle: document.getElementById('trackTitle'),
+  previousTrack: document.getElementById('previousTrack'),
   trackArtist: document.getElementById('trackArtist'),
   progressBar: document.getElementById('progressBar'),
   progressFill: document.getElementById('progressFill'),
@@ -333,6 +338,7 @@ async function init() {
   }
 
   bindUiEvents();
+  loadPreviousTrackFromStorage();
   setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
@@ -978,16 +984,68 @@ function updateTrackListFromPlayerState(sdkState) {
   if (!currentTrack) {
     clearTrackList();
     setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
+    state.lastKnownTrackUri = '';
+    state.lastKnownTrackName = '';
     setTrackMeta('', '');
     setPlaybackProgress(0, 0, false);
     return;
   }
 
   setStatusMessage(state.connectionDetail);
+  updatePreviousTrackFromCurrent(currentTrack);
   const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
   setTrackMeta(currentTrack.name || '', artistName);
   setPlaybackProgress(sdkState.position || 0, currentTrack.duration_ms || 0, !sdkState.paused);
   syncQueueState(normalizePlayerTrack(currentTrack));
+}
+
+
+function loadPreviousTrackFromStorage() {
+  const saved = getStorageItem(PREVIOUS_TRACK_STORAGE_KEY);
+  if (!saved) {
+    setPreviousTrack('');
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(saved);
+    const name = parsed && typeof parsed.name === 'string' ? parsed.name.trim() : '';
+    setPreviousTrack(name);
+  } catch (error) {
+    console.warn('Invalid saved previous track value', error);
+    setPreviousTrack('');
+  }
+}
+
+function updatePreviousTrackFromCurrent(currentTrack) {
+  const currentUri = currentTrack && currentTrack.uri ? currentTrack.uri : '';
+  if (!currentUri) {
+    return;
+  }
+
+  if (state.lastKnownTrackUri && state.lastKnownTrackUri !== currentUri) {
+    setPreviousTrack(state.lastKnownTrackName);
+  }
+
+  state.lastKnownTrackUri = currentUri;
+  state.lastKnownTrackName = currentTrack && currentTrack.name ? currentTrack.name : '';
+}
+
+function setPreviousTrack(name) {
+  const trimmed = (name || '').trim();
+  const next = trimmed || '—';
+  const label = 'Previous: ' + next;
+
+  if (state.renderedPreviousTrack !== label) {
+    ui.previousTrack.textContent = label;
+    state.renderedPreviousTrack = label;
+  }
+
+  try {
+    setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, JSON.stringify({ name: trimmed }));
+  } catch (error) {
+    console.warn(error);
+  }
 }
 
 function setTrackMeta(title, artist) {
