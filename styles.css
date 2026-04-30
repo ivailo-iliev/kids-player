@@ -42,9 +42,9 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
 .tile, #albumArt { aspect-ratio: 1 / 1; block-size: auto; }
 .tile { inline-size: 100%; block-size: auto; border: 2px solid transparent; border-radius: var(--radius); object-fit: cover; background: var(--panel-bg); cursor: pointer; display: block; }
 .tile.selected { border-color: var(--accent); }
-#playerPanel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: var(--gap); align-content: start; min-block-size: 0; overflow: auto; background: rgba(14, 14, 14, 0.92); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: calc(var(--radius) * 2); padding: var(--gap); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28) inset; }
+#playerPanel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: var(--gap); align-content: start; min-block-size: 0; overflow: auto; background: rgba(14, 14, 14, 0.92); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: calc(var(--radius) * 2); padding: var(--gap); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28) inset; }
 #nowPlayingHeader { display: grid; grid-template-columns: minmax(0, var(--art-size)) minmax(0, 1fr); gap: var(--gap); align-items: stretch; }
-#playerMeta { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: var(--gap); min-inline-size: 0; align-content: stretch; block-size: 100%; }
+#playerMeta { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: var(--gap); min-inline-size: 0; align-content: stretch; block-size: 100%; }
 #previousTrack { display: flex; align-items: center; gap: 0.5rem; min-inline-size: 0; padding: 0.35rem 0.25rem; }
 #previousTrack[hidden] { display: none; }
 #previousTrackImage { inline-size: 2rem; block-size: 2rem; flex: none; border-radius: 4px; object-fit: cover; background: var(--panel-bg); border: 1px solid var(--panel-border); display: block; }
@@ -57,7 +57,7 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
 #progressFill { block-size: 100%; inline-size: 0%; background: var(--accent); transition: inline-size 200ms linear; transform-origin: left center; }
 .compactControlButton { inline-size: auto; min-inline-size: 2.2rem; aspect-ratio: auto; block-size: 2rem; padding: 0 0.5rem; font-size: 1rem; font-weight: 700; line-height: 1; }
 #albumArt { inline-size: 100%; block-size: auto; aspect-ratio: 1 / 1; object-fit: cover; border-radius: var(--radius); background: var(--panel-bg); border: 1px solid var(--panel-border); display: block; align-self: start; }
-#controls { display: flex; justify-content: center; align-items: center; gap: var(--gap); inline-size: fit-content; justify-self: center; }
+#controls { display: flex; justify-content: center; align-items: center; gap: var(--gap); inline-size: 100%; justify-self: stretch; }
 .controlButton, .trackListButton { border: 1px solid #2a2a2a; background: var(--panel-bg); color: var(--text); border-radius: 6px; cursor: pointer; }
 .controlButton { inline-size: clamp(2.35rem, 5.6vmin, 3.25rem); aspect-ratio: 1 / 1; block-size: auto; padding: 0; display: grid; place-items: center; }
 #btnPlayPause { inline-size: clamp(3.2rem, 7vmin, 4.5rem); border: 0; background: transparent; }

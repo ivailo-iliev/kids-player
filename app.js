@@ -327,8 +327,8 @@ async function init() {
   }
 
   bindUiEvents();
-  loadPreviousTrackFromStorage();
   setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
+  loadPreviousTrackFromStorage();
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
 
@@ -741,8 +741,8 @@ function updateTrackList() {
     updateRenderedTrackText();
   }
 
-  const current = state.currentList[state.currentIndex];
-  setAlbumArtImage(current ? trackToAlbumArtImage(current) : createFallbackImage(ALBUM_ART_IMAGE_SIZE));
+  const currentTrack = state.currentTrackForPrevious;
+  setAlbumArtImage(currentTrack ? trackToAlbumArtImage(currentTrack) : createFallbackImage(ALBUM_ART_IMAGE_SIZE));
 }
 
 function clearTrackList() {
@@ -816,6 +816,11 @@ function loadPreviousTrackFromStorage() {
   state.previousTrackImageWidth = savedPreviousTrack.imageWidth;
   state.previousTrackImageHeight = savedPreviousTrack.imageHeight;
   renderPreviousTrack();
+  if (savedPreviousTrack.uri || savedPreviousTrack.name || savedPreviousTrack.image) {
+    state.currentTrackForPrevious = savedPreviousTrack;
+    setTrackMeta(savedPreviousTrack.name || 'Nothing playing', '');
+    setAlbumArtImage(trackToAlbumArtImage(savedPreviousTrack));
+  }
 }
 
 function savePreviousTrack(track) {
