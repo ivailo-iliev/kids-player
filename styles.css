@@ -46,6 +46,7 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
 #nowPlayingHeader { display: grid; grid-template-columns: minmax(0, var(--art-size)) minmax(0, 1fr); gap: var(--gap); align-items: stretch; }
 #playerMeta { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: var(--gap); min-inline-size: 0; align-content: stretch; block-size: 100%; }
 #trackMeta { min-inline-size: 0; display: grid; align-content: end; }
+#previousTrack { color: var(--text-muted); font-size: clamp(0.72rem, 1.7vmin, 0.9rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #trackArtist { color: var(--text-muted); font-size: clamp(0.75rem, 1.8vmin, 0.95rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #trackTitle { font-size: clamp(1rem, 2.6vmin, 1.45rem); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #progressRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--gap); align-items: center; }
