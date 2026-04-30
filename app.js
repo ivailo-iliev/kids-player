@@ -340,7 +340,7 @@ async function init() {
   bindUiEvents();
   const savedPreviousTrack = getStorageItem(PREVIOUS_TRACK_STORAGE_KEY);
   state.previousTrackName = savedPreviousTrack ? savedPreviousTrack : '';
-  ui.previousTrack.textContent = 'Previous: ' + (state.previousTrackName || '—');
+  renderPreviousTrack();
   setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
@@ -980,6 +980,11 @@ function clearTrackList() {
   ui.trackList.innerHTML = '';
 }
 
+
+function renderPreviousTrack() {
+  ui.previousTrack.textContent = 'Previous: ' + (state.previousTrackName || '—');
+}
+
 function updateTrackListFromPlayerState(sdkState) {
   const currentTrack = sdkState.track_window && sdkState.track_window.current_track;
 
@@ -998,8 +1003,12 @@ function updateTrackListFromPlayerState(sdkState) {
     const previousName = state.currentTrackNameForPrevious || '';
     if (previousName !== state.previousTrackName) {
       state.previousTrackName = previousName;
-      ui.previousTrack.textContent = 'Previous: ' + (state.previousTrackName || '—');
-      setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, state.previousTrackName);
+      renderPreviousTrack();
+      try {
+        setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, state.previousTrackName);
+      } catch (error) {
+        console.warn(error);
+      }
     }
   }
   state.lastKnownTrackUri = currentUri;
