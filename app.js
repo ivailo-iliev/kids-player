@@ -140,6 +140,12 @@ const state = {
   queueSyncCurrentTrack: null,
   renderedAlbumArtSrc: '',
   renderedStatusMessage: '',
+  renderedTrackTitle: '',
+  renderedTrackArtist: '',
+  progressDurationMs: 0,
+  progressPositionMs: 0,
+  progressLastUpdateMs: 0,
+  progressTimerId: null,
   startupStep: 'boot'
 };
 
@@ -153,7 +159,12 @@ const ui = {
   btnPrev: document.getElementById('btnPrev'),
   btnPlayPause: document.getElementById('btnPlayPause'),
   btnNext: document.getElementById('btnNext'),
-  playPauseIcon: document.getElementById('playPauseIcon')
+  playPauseIcon: document.getElementById('playPauseIcon'),
+  trackTitle: document.getElementById('trackTitle'),
+  trackArtist: document.getElementById('trackArtist'),
+  progressBar: document.getElementById('progressBar'),
+  progressFill: document.getElementById('progressFill'),
+  btnRestart: document.getElementById('btnRestart')
 };
 
 let spotifySdkReadyResolve = null;
@@ -398,6 +409,7 @@ function bindUiEvents() {
   ui.btnPlayPause.addEventListener('click', onTogglePlayPause);
   ui.btnPrev.addEventListener('click', () => onTrackStep(-1));
   ui.btnNext.addEventListener('click', () => onTrackStep(1));
+  ui.btnRestart.addEventListener('click', onRestartTrack);
   ui.btnCast.addEventListener('click', onCastButtonClick);
 
   window.addEventListener('keydown', onKeyDown);
@@ -654,6 +666,11 @@ async function refreshPlaybackState() {
   }
 
   setPlayingState(!!playbackState.is_playing);
+  if (playbackState.item) {
+    const artists = playbackState.item.artists ? playbackState.item.artists.map((artist) => artist.name).join(', ') : '';
+    setTrackMeta(playbackState.item.name || '', artists);
+    setPlaybackProgress(playbackState.progress_ms || 0, playbackState.item.duration_ms || 0, !!playbackState.is_playing);
+  }
 }
 
 function selectLocalPlaybackMode() {
@@ -784,6 +801,33 @@ async function onTogglePlayPause() {
   } catch (error) {
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Playback device unavailable');
     scheduleReconnect('Playback toggle failed');
+  }
+}
+
+async function onRestartTrack() {
+  if (!canControlPlayback()) {
+    return;
+  }
+
+  const wasPlaying = state.isPlaying;
+  const deviceId = await getActivePlaybackDeviceId();
+  if (!deviceId) {
+    return;
+  }
+
+  const response = await spotifyWrite('/me/player/seek?position_ms=0&device_id=' + encodeURIComponent(deviceId), {
+    method: 'PUT',
+    suppressReconnect: true
+  });
+
+  if (!response.ok) {
+    return;
+  }
+
+  setPlaybackProgress(0, state.progressDurationMs, wasPlaying);
+  if (!wasPlaying) {
+    await remotePause();
+    setPlayingState(false);
   }
 }
 
@@ -934,11 +978,60 @@ function updateTrackListFromPlayerState(sdkState) {
   if (!currentTrack) {
     clearTrackList();
     setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
+    setTrackMeta('', '');
+    setPlaybackProgress(0, 0, false);
     return;
   }
 
   setStatusMessage(state.connectionDetail);
+  const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
+  setTrackMeta(currentTrack.name || '', artistName);
+  setPlaybackProgress(sdkState.position || 0, currentTrack.duration_ms || 0, !sdkState.paused);
   syncQueueState(normalizePlayerTrack(currentTrack));
+}
+
+function setTrackMeta(title, artist) {
+  const nextTitle = title || 'Nothing playing';
+  const nextArtist = artist || '—';
+  if (state.renderedTrackTitle !== nextTitle) {
+    ui.trackTitle.textContent = nextTitle;
+    state.renderedTrackTitle = nextTitle;
+  }
+  if (state.renderedTrackArtist !== nextArtist) {
+    ui.trackArtist.textContent = nextArtist;
+    state.renderedTrackArtist = nextArtist;
+  }
+}
+
+function setPlaybackProgress(positionMs, durationMs, isPlaying) {
+  state.progressPositionMs = Math.max(0, positionMs || 0);
+  state.progressDurationMs = Math.max(0, durationMs || 0);
+  state.progressLastUpdateMs = Date.now();
+  renderPlaybackProgress();
+  scheduleProgressTick(!!isPlaying && state.progressDurationMs > 0);
+}
+
+function scheduleProgressTick(shouldRun) {
+  if (state.progressTimerId) {
+    clearInterval(state.progressTimerId);
+    state.progressTimerId = null;
+  }
+  if (!shouldRun) {
+    return;
+  }
+  state.progressTimerId = window.setInterval(() => {
+    const elapsed = Date.now() - state.progressLastUpdateMs;
+    const nextPosition = Math.min(state.progressDurationMs, state.progressPositionMs + elapsed);
+    renderPlaybackProgress(nextPosition);
+  }, 250);
+}
+
+function renderPlaybackProgress(positionOverrideMs) {
+  const duration = state.progressDurationMs;
+  const position = typeof positionOverrideMs === 'number' ? positionOverrideMs : state.progressPositionMs;
+  const ratio = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
+  ui.progressFill.style.inlineSize = String(ratio * 100) + '%';
+  ui.progressBar.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
 }
 
 function normalizePlayerTrack(track) {

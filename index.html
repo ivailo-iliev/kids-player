@@ -24,6 +24,16 @@
           <img id="albumArt" alt="Current album art" width="160" height="160" decoding="async" />
 
           <div id="playerMeta">
+            <div id="trackMeta" aria-live="polite">
+              <div id="trackArtist">—</div>
+              <div id="trackTitle">Nothing playing</div>
+            </div>
+            <div id="progressRow">
+              <div id="progressBar" role="progressbar" aria-label="Song progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="progressFill"></div>
+              </div>
+              <button id="btnRestart" class="controlButton compactControlButton" aria-label="Restart song">↺</button>
+            </div>
             <div id="controls" aria-label="Playback controls">
           <button id="btnCast" class="controlButton" aria-label="Choose playback output">
             <span class="icon icon-connected" aria-hidden="true"></span>
