@@ -90,6 +90,8 @@ const ALBUM_ART_IMAGE_SIZE = 160;
 const TRACK_THUMBNAIL_SIZE = 40;
 const MAX_RENDERED_TRACKS = 40;
 const PREVIOUS_TRACK_STORAGE_KEY = 'previous_track';
+const TAKEOVER_CONFIRMATION_TIMEOUT_MS = 5000;
+const TAKEOVER_CONFIRMATION_POLL_MS = 250;
 const PLAYBACK_LIST_MODES = {
   SOURCE: 'source',
   QUEUE: 'queue'
@@ -550,8 +552,33 @@ async function transferPlaybackToLocalDevice(shouldPlay) {
     return false;
   }
 
-  state.activePlaybackDeviceId = state.deviceId;
-  return true;
+  return confirmLocalPlaybackDevice(shouldPlay);
+}
+
+async function confirmLocalPlaybackDevice(shouldPlay) {
+  const deadline = Date.now() + TAKEOVER_CONFIRMATION_TIMEOUT_MS;
+
+  while (Date.now() <= deadline) {
+    const playbackState = await spotifyGet('/me/player', { allowResourceErrors: true });
+    const deviceId = playbackState && playbackState.device && playbackState.device.id ? playbackState.device.id : '';
+
+    if (deviceId && deviceId === state.deviceId) {
+      state.activePlaybackDeviceId = state.deviceId;
+      return true;
+    }
+
+    if (!shouldPlay && !deviceId) {
+      state.activePlaybackDeviceId = state.deviceId;
+      return true;
+    }
+
+    await pauseForUi();
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, TAKEOVER_CONFIRMATION_POLL_MS);
+    });
+  }
+
+  return false;
 }
 
 async function setPlaybackRepeatMode(mode) {
