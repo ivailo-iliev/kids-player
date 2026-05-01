@@ -90,6 +90,10 @@ const ALBUM_ART_IMAGE_SIZE = 160;
 const TRACK_THUMBNAIL_SIZE = 40;
 const MAX_RENDERED_TRACKS = 40;
 const PREVIOUS_TRACK_STORAGE_KEY = 'previous_track';
+const PLAYBACK_LIST_MODES = {
+  SOURCE: 'source',
+  QUEUE: 'queue'
+};
 
 const state = {
   accessToken: null,
@@ -116,6 +120,8 @@ const state = {
   trackNodeIndices: [],
   currentIndex: 0,
   currentSourceType: null,
+  currentSourceId: '',
+  playbackListMode: PLAYBACK_LIST_MODES.SOURCE,
   contextTrackCache: {},
   artistTrackCache: {},
   playSelectionRequestId: 0,
@@ -134,6 +140,10 @@ const state = {
   previousTrackImage: '',
   previousTrackImageWidth: 0,
   previousTrackImageHeight: 0,
+  previousTrackContextUri: '',
+  previousTrackSourceType: '',
+  previousTrackSourceId: '',
+  previousTrackPlaybackListMode: PLAYBACK_LIST_MODES.SOURCE,
   lastKnownTrackUri: '',
   currentTrackForPrevious: null,
   progressDurationMs: 0,
@@ -577,6 +587,27 @@ function shouldUseSpotifyPreviousTrack() {
   return !!(spotifyPreviousUri && state.previousTrackUri && spotifyPreviousUri === state.previousTrackUri);
 }
 
+function getCurrentSourceContextUri() {
+  if (state.currentContextUri) {
+    return state.currentContextUri;
+  }
+
+  if (state.currentSourceId && (state.currentSourceType === 'playlist' || state.currentSourceType === 'album' || state.currentSourceType === 'artist')) {
+    return 'spotify:' + state.currentSourceType + ':' + state.currentSourceId;
+  }
+
+  return '';
+}
+
+function getCurrentPlaybackContextRecord() {
+  return {
+    contextUri: getCurrentSourceContextUri(),
+    sourceType: state.currentSourceType || '',
+    sourceId: state.currentSourceId || '',
+    playbackListMode: state.playbackListMode || PLAYBACK_LIST_MODES.SOURCE
+  };
+}
+
 function setPlayingState(isPlaying) {
   state.isPlaying = !!isPlaying;
   ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
@@ -619,7 +650,16 @@ async function playSelectedTile() {
     return;
   }
 
+  const selectionRequestId = ++state.playSelectionRequestId;
+
   if (tile.type === 'song') {
+    state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
+    state.currentSourceType = tile.type;
+    state.currentSourceId = tile.id;
+    state.currentContextUri = '';
+    state.currentList = [tile.track];
+    state.currentIndex = 0;
+    updateTrackList();
     const started = await playTrackUri(tile.track.uri);
     if (started) {
       state.currentSourceType = tile.type;
@@ -627,15 +667,35 @@ async function playSelectedTile() {
     return;
   }
 
-  state.playSelectionRequestId += 1;
-  state.currentList = [];
-  state.currentIndex = 0;
   state.currentSourceType = tile.type;
-  clearTrackList();
+  state.currentSourceId = tile.id;
+  state.currentIndex = 0;
+  state.currentContextUri = 'spotify:' + tile.type + ':' + tile.id;
+
+  if (tile.type === 'artist') {
+    state.playbackListMode = PLAYBACK_LIST_MODES.QUEUE;
+    state.currentList = [];
+    clearTrackList();
+  } else {
+    state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
+    const tracks = await fetchContextTracks(tile.type, tile.id);
+    if (selectionRequestId !== state.playSelectionRequestId) {
+      return;
+    }
+    state.currentList = tracks;
+    updateTrackList();
+  }
+
   setAlbumArtImage(tileToAlbumArtImage(tile));
   await setPlaybackRepeatMode('off');
+  if (selectionRequestId !== state.playSelectionRequestId) {
+    return;
+  }
 
-  await playContextUri('spotify:' + tile.type + ':' + tile.id);
+  const started = await playContextUri('spotify:' + tile.type + ':' + tile.id);
+  if (started && state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE) {
+    await setPlaybackRepeatMode('context');
+  }
 }
 
 async function onTrackStep(direction) {
@@ -661,13 +721,15 @@ async function onTrackStep(direction) {
         await setPlaybackRepeatMode('off');
         await state.player.previousTrack();
         await state.player.resume();
-      } else {
-        await playSavedPreviousTrack();
+      } else if (await playSavedPreviousTrack()) {
+        return;
       }
-    } else {
+    } else if (state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
       await setPlaybackRepeatMode('off');
       await state.player.nextTrack();
       await state.player.resume();
+    } else {
+      await playCurrentSourceTrackStep(1);
     }
 
     await pauseForUi();
@@ -903,18 +965,48 @@ function updateTrackListItem(node, track, isNowPlaying) {
 
 function parsePreviousTrackRecord(value) {
   if (!value) {
-    return { uri: '', name: '', image: '', imageWidth: 0, imageHeight: 0 };
+    return {
+      uri: '',
+      name: '',
+      image: '',
+      imageWidth: 0,
+      imageHeight: 0,
+      contextUri: '',
+      sourceType: '',
+      sourceId: '',
+      playbackListMode: PLAYBACK_LIST_MODES.SOURCE
+    };
   }
 
   let parsed;
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    return { uri: '', name: '', image: '', imageWidth: 0, imageHeight: 0 };
+    return {
+      uri: '',
+      name: '',
+      image: '',
+      imageWidth: 0,
+      imageHeight: 0,
+      contextUri: '',
+      sourceType: '',
+      sourceId: '',
+      playbackListMode: PLAYBACK_LIST_MODES.SOURCE
+    };
   }
 
   if (!parsed || typeof parsed !== 'object') {
-    return { uri: '', name: '', image: '', imageWidth: 0, imageHeight: 0 };
+    return {
+      uri: '',
+      name: '',
+      image: '',
+      imageWidth: 0,
+      imageHeight: 0,
+      contextUri: '',
+      sourceType: '',
+      sourceId: '',
+      playbackListMode: PLAYBACK_LIST_MODES.SOURCE
+    };
   }
 
   return {
@@ -922,7 +1014,11 @@ function parsePreviousTrackRecord(value) {
     name: typeof parsed.name === 'string' ? parsed.name : '',
     image: typeof parsed.image === 'string' ? parsed.image : '',
     imageWidth: Number.isFinite(parsed.imageWidth) ? parsed.imageWidth : 0,
-    imageHeight: Number.isFinite(parsed.imageHeight) ? parsed.imageHeight : 0
+    imageHeight: Number.isFinite(parsed.imageHeight) ? parsed.imageHeight : 0,
+    contextUri: typeof parsed.contextUri === 'string' ? parsed.contextUri : '',
+    sourceType: typeof parsed.sourceType === 'string' ? parsed.sourceType : '',
+    sourceId: typeof parsed.sourceId === 'string' ? parsed.sourceId : '',
+    playbackListMode: parsed.playbackListMode === PLAYBACK_LIST_MODES.QUEUE ? PLAYBACK_LIST_MODES.QUEUE : PLAYBACK_LIST_MODES.SOURCE
   };
 }
 
@@ -933,6 +1029,10 @@ function loadPreviousTrackFromStorage() {
   state.previousTrackImage = savedPreviousTrack.image;
   state.previousTrackImageWidth = savedPreviousTrack.imageWidth;
   state.previousTrackImageHeight = savedPreviousTrack.imageHeight;
+  state.previousTrackContextUri = savedPreviousTrack.contextUri;
+  state.previousTrackSourceType = savedPreviousTrack.sourceType;
+  state.previousTrackSourceId = savedPreviousTrack.sourceId;
+  state.previousTrackPlaybackListMode = savedPreviousTrack.playbackListMode;
   renderPreviousTrack();
   if (savedPreviousTrack.uri || savedPreviousTrack.name || savedPreviousTrack.image) {
     state.currentTrackForPrevious = savedPreviousTrack;
@@ -941,13 +1041,19 @@ function loadPreviousTrackFromStorage() {
   }
 }
 
-function savePreviousTrack(track) {
+function savePreviousTrack(track, playbackContext) {
   const previousTrack = {
     uri: track && track.uri ? track.uri : '',
     name: track && track.name ? track.name : '',
     image: track && track.image ? track.image : '',
     imageWidth: track && Number.isFinite(track.imageWidth) ? track.imageWidth : 0,
-    imageHeight: track && Number.isFinite(track.imageHeight) ? track.imageHeight : 0
+    imageHeight: track && Number.isFinite(track.imageHeight) ? track.imageHeight : 0,
+    contextUri: playbackContext && playbackContext.contextUri ? playbackContext.contextUri : '',
+    sourceType: playbackContext && playbackContext.sourceType ? playbackContext.sourceType : '',
+    sourceId: playbackContext && playbackContext.sourceId ? playbackContext.sourceId : '',
+    playbackListMode: playbackContext && playbackContext.playbackListMode === PLAYBACK_LIST_MODES.QUEUE
+      ? PLAYBACK_LIST_MODES.QUEUE
+      : PLAYBACK_LIST_MODES.SOURCE
   };
 
   state.previousTrackName = previousTrack.name;
@@ -955,6 +1061,10 @@ function savePreviousTrack(track) {
   state.previousTrackImage = previousTrack.image;
   state.previousTrackImageWidth = previousTrack.imageWidth;
   state.previousTrackImageHeight = previousTrack.imageHeight;
+  state.previousTrackContextUri = previousTrack.contextUri;
+  state.previousTrackSourceType = previousTrack.sourceType;
+  state.previousTrackSourceId = previousTrack.sourceId;
+  state.previousTrackPlaybackListMode = previousTrack.playbackListMode;
   renderPreviousTrack();
 
   try {
@@ -986,11 +1096,17 @@ function renderPreviousTrack() {
 }
 
 async function playSavedPreviousTrack() {
-  if (!state.previousTrackUri) {
-    return false;
-  }
-
-  return playTrackUri(state.previousTrackUri);
+  return playTrackFromSavedRecord({
+    uri: state.previousTrackUri,
+    name: state.previousTrackName,
+    image: state.previousTrackImage,
+    imageWidth: state.previousTrackImageWidth,
+    imageHeight: state.previousTrackImageHeight,
+    contextUri: state.previousTrackContextUri,
+    sourceType: state.previousTrackSourceType,
+    sourceId: state.previousTrackSourceId,
+    playbackListMode: state.previousTrackPlaybackListMode
+  });
 }
 
 function updateTrackListFromPlayerState(sdkState) {
@@ -1006,11 +1122,12 @@ function updateTrackListFromPlayerState(sdkState) {
 
   setStatusMessage(state.connectionDetail);
   state.lastPlayerState = sdkState;
+  const previousPlaybackContext = getCurrentPlaybackContextRecord();
   const currentUri = currentTrack.uri || '';
   if (state.lastKnownTrackUri && currentUri && state.lastKnownTrackUri !== currentUri) {
     const previousTrack = state.currentTrackForPrevious || null;
     if (previousTrack.uri || previousTrack.name) {
-      savePreviousTrack(previousTrack);
+      savePreviousTrack(previousTrack, previousPlaybackContext);
     }
   }
   state.lastKnownTrackUri = currentUri;
@@ -1020,7 +1137,11 @@ function updateTrackListFromPlayerState(sdkState) {
   const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
   setTrackMeta(currentTrack.name || '', artistName);
   setPlaybackProgress(sdkState.position || 0, currentTrack.duration_ms || 0, !sdkState.paused);
-  syncQueueState(state.currentTrackForPrevious);
+  if (state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
+    syncQueueState(state.currentTrackForPrevious);
+  } else {
+    syncSourceListState(state.currentTrackForPrevious);
+  }
 }
 
 function setTrackMeta(title, artist) {
@@ -1116,6 +1237,17 @@ async function syncQueueState(currentTrack) {
       syncQueueState(state.queueSyncCurrentTrack);
     }
   }
+}
+
+function syncSourceListState(currentTrack) {
+  const currentUri = currentTrack && currentTrack.uri ? currentTrack.uri : '';
+  if (currentUri) {
+    const nextIndex = state.currentList.findIndex((track) => track && track.uri === currentUri);
+    if (nextIndex !== -1) {
+      state.currentIndex = nextIndex;
+    }
+  }
+  updateTrackList();
 }
 
 function normalizeQueueTrack(track) {
@@ -1526,14 +1658,25 @@ function waitForSpotifyPlayerReady() {
 }
 
 async function playTrackAtIndex(index) {
-  state.currentIndex = index;
   const track = state.currentList[index];
   if (!track) {
-    return;
+    return false;
   }
 
-  await playTrackFromCurrentContext(track.uri);
+  const trackUri = track.uri || '';
+  if (!trackUri) {
+    return false;
+  }
+
+  state.currentIndex = index;
+  let started = false;
+  if (state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
+    started = await playTrackUri(trackUri);
+  } else {
+    started = await playTrackFromCurrentContext(trackUri);
+  }
   updateTrackList();
+  return started;
 }
 
 async function fetchContextTracks(type, id) {
@@ -1546,14 +1689,26 @@ async function fetchContextTracks(type, id) {
     ? '/playlists/' + id + '/tracks?limit=100'
     : '/albums/' + id + '/tracks?limit=50';
 
-  const data = await spotifyGet(endpoint, { allowResourceErrors: true });
-  if (!data) {
+  const collectedItems = [];
+  let nextPath = endpoint;
+
+  while (nextPath) {
+    const data = await spotifyGet(nextPath, { allowResourceErrors: true });
+    if (!data) {
+      break;
+    }
+
+    const items = data.items || [];
+    collectedItems.push.apply(collectedItems, items);
+    nextPath = data.next ? data.next.replace('https://api.spotify.com/v1', '') : '';
+  }
+
+  if (!collectedItems.length) {
     return [];
   }
-  const items = data.items || [];
 
   if (type === 'playlist') {
-    const tracks = items
+    const tracks = collectedItems
       .filter((entry) => entry.track && entry.track.uri)
       .map((entry) => normalizeTrack(entry.track));
     state.contextTrackCache[cacheKey] = tracks;
@@ -1566,7 +1721,7 @@ async function fetchContextTracks(type, id) {
   }
   const image = normalizeAlbumArt(album.images);
 
-  const tracks = items
+  const tracks = collectedItems
     .filter((track) => track && track.uri)
     .map((track) => ({
       uri: track.uri,
@@ -1637,12 +1792,12 @@ async function fetchArtistTracks(artistId) {
 async function playContextUri(contextUri) {
   const deviceId = state.deviceId;
   if (!deviceId) {
-    return;
+    return false;
   }
 
   const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
   if (!tookOver) {
-    return;
+    return false;
   }
 
   const body = JSON.stringify({
@@ -1662,33 +1817,38 @@ async function playContextUri(contextUri) {
         continue;
       }
       transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify authorization expired');
-      return;
+      return false;
     }
 
     if (isNonFatalSpotifyStatus(response.status)) {
       clearTrackList();
       setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
       setStatusMessage('This item is unavailable for the current Spotify account');
-      return;
+      return false;
     }
 
     if (!response.ok) {
       transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify play request failed');
       scheduleReconnect('Play request failed');
-      return;
+      return false;
     }
 
     await refreshPlaybackState();
     setPlayingState(true);
     state.activePlaybackDeviceId = state.deviceId;
     await setPlaybackRepeatMode('off');
-    return;
+    return true;
   }
+
+  return false;
 }
 
 async function playTrackFromCurrentContext(trackUri) {
+  return playTrackInContext(getCurrentSourceContextUri(), trackUri);
+}
+
+async function playTrackInContext(contextUri, trackUri) {
   const deviceId = state.deviceId;
-  const contextUri = state.currentContextUri || '';
   if (!deviceId || !trackUri || !contextUri) {
     return playTrackUri(trackUri);
   }
@@ -1714,11 +1874,85 @@ async function playTrackFromCurrentContext(trackUri) {
     await refreshPlaybackState();
     setPlayingState(true);
     state.activePlaybackDeviceId = state.deviceId;
-    await setPlaybackRepeatMode('context');
+    await setPlaybackRepeatMode(state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE ? 'context' : 'off');
     return true;
   }
 
   return false;
+}
+
+async function playTrackFromSavedRecord(record) {
+  if (!record || !record.uri) {
+    return false;
+  }
+
+  const savedContextUri = record.contextUri || '';
+  const savedSourceType = record.sourceType || '';
+  const savedSourceId = record.sourceId || '';
+  const savedPlaybackMode = record.playbackListMode || PLAYBACK_LIST_MODES.SOURCE;
+
+  if (savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE && (savedSourceType === 'playlist' || savedSourceType === 'album') && savedSourceId) {
+    const tracks = await fetchContextTracks(savedSourceType, savedSourceId);
+    if (tracks.length) {
+      state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
+      state.currentSourceType = savedSourceType;
+      state.currentSourceId = savedSourceId;
+      state.currentContextUri = savedContextUri || ('spotify:' + savedSourceType + ':' + savedSourceId);
+      state.currentList = tracks;
+      const trackIndex = tracks.findIndex((track) => track && track.uri === record.uri);
+      state.currentIndex = trackIndex === -1 ? 0 : trackIndex;
+      updateTrackList();
+    }
+
+    if (state.currentContextUri) {
+      const started = await playTrackInContext(state.currentContextUri, record.uri);
+      if (started) {
+        return true;
+      }
+    }
+    if (savedContextUri) {
+      if (savedSourceType === 'playlist' || savedSourceType === 'album') {
+        state.currentList = [];
+        state.currentIndex = 0;
+        clearTrackList();
+      }
+      const started = await playContextUri(savedContextUri);
+      if (started && savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE) {
+        await setPlaybackRepeatMode('context');
+      }
+      return started;
+    }
+  }
+
+  if (savedContextUri) {
+    state.currentContextUri = savedContextUri;
+    state.currentSourceType = savedSourceType || state.currentSourceType;
+    state.currentSourceId = savedSourceId || state.currentSourceId;
+    if (savedPlaybackMode === PLAYBACK_LIST_MODES.QUEUE || savedSourceType === 'artist') {
+      state.playbackListMode = PLAYBACK_LIST_MODES.QUEUE;
+    } else if (savedSourceType === 'playlist' || savedSourceType === 'album' || savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE) {
+      state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
+    }
+    if (savedPlaybackMode === PLAYBACK_LIST_MODES.QUEUE || savedSourceType === 'artist' || savedSourceType === 'playlist' || savedSourceType === 'album') {
+      const started = await playContextUri(savedContextUri);
+      if (started && savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE) {
+        await setPlaybackRepeatMode('context');
+      }
+      return started;
+    }
+  }
+
+  return playTrackUri(record.uri);
+}
+
+async function playCurrentSourceTrackStep(delta) {
+  if (!state.currentList.length) {
+    return false;
+  }
+
+  const count = state.currentList.length;
+  const nextIndex = ((state.currentIndex + delta) % count + count) % count;
+  return playTrackAtIndex(nextIndex);
 }
 
 async function playTrackUri(trackUri) {

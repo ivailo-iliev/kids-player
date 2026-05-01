@@ -32,10 +32,10 @@ Notes:
 ## Behavior
 
 - Left panel: mixed favorites tiles (liked songs, followed artists, playlists, liked albums).
-- Right panel: now playing art, controls, and current allowed track list.
-- Artist playback: top tracks first, fallback to all artist tracks if top tracks are unavailable.
+- Right panel: now playing art, controls, and the current playable track list.
+- Artist/open-ended playback: Spotify owns the next tracks and the list mirrors Spotify queue state.
 - Single-song playback: next/prev replay the same song.
-- Playlist/album playback: loops when reaching the end.
+- Playlist/album playback: the app fetches the source tracks and keeps next/prev inside that context.
 - Left panel navigation wraps to first tile after the end.
 - Connection state machine handles authorizing/connecting/connected/disconnected/token-expired states, disables controls while disconnected, and auto-retries with backoff.
 
