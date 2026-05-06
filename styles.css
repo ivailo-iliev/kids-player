@@ -2,7 +2,7 @@
   --pad: clamp(0.5rem, 1.2vmin, 1rem);
   --gap: clamp(0.3rem, 0.75vmin, 0.65rem);
   --radius: clamp(0.4rem, 0.8vmin, 0.65rem);
-  --portrait-player-ratio: 0.36;
+  --portrait-player-ratio: 0.30;
   --player-min: clamp(24rem, 35vmin, 28rem);
   --player-max: clamp(30rem, 42vmin, 36rem);
   --art-size: clamp(5.5rem, 14vmin, 9rem);
@@ -87,7 +87,7 @@ html, body { margin: 0; inline-size: 100%; block-size: 100%; overflow: hidden; b
 
 @media (orientation: portrait) {
   #app { grid-template-columns: 1fr; grid-template-rows: calc((100dvh - (2 * var(--pad)) - var(--gap)) * var(--portrait-player-ratio)) 1fr; }
-  #app:has(#trackList .trackListItem:nth-child(2)) { --portrait-player-ratio: 0.44; }
+  #app:has(#trackList .trackListItem:nth-child(2)) { --portrait-player-ratio: 0.42; }
   #playerPanel { grid-row: 1; }
   #tilePanel { grid-row: 2; }
   #tileGrid { grid-template-columns: repeat(auto-fit, minmax(clamp(var(--tile-min), 22dvw, var(--tile-max)), 1fr)); }
