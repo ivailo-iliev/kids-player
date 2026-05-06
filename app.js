@@ -158,7 +158,6 @@ const state = {
   previousTrackPlaybackListMode: PLAYBACK_LIST_MODES.SOURCE,
   lastKnownTrackUri: '',
   currentTrackForPrevious: null,
-  currentTrackContextForPrevious: null,
   progressDurationMs: 0,
   progressPositionMs: 0,
   progressLastUpdateMs: 0,
@@ -1221,7 +1220,8 @@ function emptyTrackRecord() {
 }
 
 function serializeTrackRecord(track, playbackContext) {
-  const context = playbackContext || getCurrentPlaybackContextRecord();
+  const trackContext = track && (track.contextUri || track.sourceType || track.sourceId || track.playbackListMode) ? track : null;
+  const context = playbackContext || trackContext || getCurrentPlaybackContextRecord();
   return {
     uri: track && track.uri ? track.uri : '',
     name: track && track.name ? track.name : '',
@@ -1357,8 +1357,7 @@ function updateCurrentTrackSnapshot(track, options) {
   state.currentTrackImage = track.image || '';
   state.currentTrackImageWidth = track.imageWidth || 0;
   state.currentTrackImageHeight = track.imageHeight || 0;
-  state.currentTrackForPrevious = track;
-  state.currentTrackContextForPrevious = playbackContext;
+  state.currentTrackForPrevious = serializeTrackRecord(track, playbackContext);
 
   if (trackChanged || !state.lastKnownTrackUri) {
     state.lastKnownTrackUri = track.uri || state.lastKnownTrackUri;
@@ -1375,7 +1374,7 @@ function updateCurrentTrackSnapshot(track, options) {
   }
 
   if (shouldPersist) {
-    saveCurrentTrack(track, playbackContext);
+    saveCurrentTrack(state.currentTrackForPrevious);
   }
 }
 
@@ -1409,9 +1408,8 @@ function updateTrackListFromPlayerState(sdkState) {
   const currentUri = currentTrack.uri || '';
   if (state.lastKnownTrackUri && currentUri && state.lastKnownTrackUri !== currentUri) {
     const previousTrack = state.currentTrackForPrevious || null;
-    const previousPlaybackContext = state.currentTrackContextForPrevious || getCurrentPlaybackContextRecord();
     if (previousTrack.uri || previousTrack.name) {
-      savePreviousTrack(previousTrack, previousPlaybackContext);
+      savePreviousTrack(previousTrack);
     }
   }
   const currentPlaybackContext = getPlaybackContextFromSpotifyState(sdkState);
