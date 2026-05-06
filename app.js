@@ -131,8 +131,6 @@ const state = {
   currentSourceId: '',
   playbackListMode: PLAYBACK_LIST_MODES.SOURCE,
   contextTrackCache: {},
-  unreadableContextCache: {},
-  artistTrackCache: {},
   playSelectionRequestId: 0,
   healthcheckInFlight: false,
   queueSyncInFlight: false,
@@ -761,66 +759,107 @@ function applySpotifyPlaybackState(playbackState) {
   }
 }
 
-async function preparePlaybackContext(tileOrRecord) {
-  if (!tileOrRecord) {
+async function buildPlaybackPlan(record) {
+  const source = record || {};
+  const sourceType = source.type || source.sourceType || '';
+  const sourceId = source.id || source.sourceId || '';
+  const contextUri = source.contextUri || (sourceType && sourceId && sourceType !== 'song' ? 'spotify:' + sourceType + ':' + sourceId : '');
+  const track = source.track || null;
+  const trackUri = source.trackUri || source.uri || (track && track.uri ? track.uri : '');
+
+  if (!record) {
     return {
       mode: PLAYBACK_LIST_MODES.QUEUE,
       contextUri: '',
+      trackUri: '',
       tracks: [],
-      fallbackReason: 'missing_context'
+      sourceType: '',
+      sourceId: '',
+      reason: 'missing_context'
     };
   }
 
-  const type = tileOrRecord.type || tileOrRecord.sourceType || '';
-  const id = tileOrRecord.id || tileOrRecord.sourceId || '';
-  const contextUri = tileOrRecord.contextUri || (type && id ? 'spotify:' + type + ':' + id : '');
-
-  if (type === 'song') {
+  if (sourceType === 'song') {
     return {
       mode: PLAYBACK_LIST_MODES.SOURCE,
-      contextUri,
-      tracks: tileOrRecord.track ? [tileOrRecord.track] : [],
-      fallbackReason: ''
+      contextUri: '',
+      trackUri,
+      tracks: track ? [track] : [],
+      sourceType,
+      sourceId,
+      reason: ''
     };
   }
 
-  if (type === 'artist') {
-    const tracks = id ? await fetchArtistTracks(id) : [];
+  if (source.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
     return {
       mode: PLAYBACK_LIST_MODES.QUEUE,
       contextUri,
-      tracks,
-      fallbackReason: 'artist_queue_mode'
+      trackUri,
+      tracks: [],
+      sourceType,
+      sourceId,
+      reason: 'saved_queue_mode'
     };
   }
 
-  if ((type === 'playlist' || type === 'album') && id) {
-    const tracks = await fetchContextTracks(type, id);
+  if (sourceType === 'artist') {
+    return {
+      mode: PLAYBACK_LIST_MODES.QUEUE,
+      contextUri,
+      trackUri,
+      tracks: [],
+      sourceType,
+      sourceId,
+      reason: 'artist_queue_mode'
+    };
+  }
+
+  if (sourceType === 'playlist' && source.ownerId === 'spotify') {
+    return {
+      mode: PLAYBACK_LIST_MODES.QUEUE,
+      contextUri,
+      trackUri,
+      tracks: [],
+      sourceType,
+      sourceId,
+      reason: 'spotify_playlist_queue_mode'
+    };
+  }
+
+  if ((sourceType === 'playlist' || sourceType === 'album') && sourceId) {
+    const tracks = await fetchContextTracks(sourceType, sourceId);
     if (tracks.length) {
       return {
         mode: PLAYBACK_LIST_MODES.SOURCE,
         contextUri,
+        trackUri,
         tracks,
-        fallbackReason: ''
+        sourceType,
+        sourceId,
+        reason: ''
       };
     }
 
-    const cachedFailure = getUnreadableContext(type, id);
-    if (cachedFailure) {
-      return {
-        mode: PLAYBACK_LIST_MODES.QUEUE,
-        contextUri,
-        tracks: [],
-        fallbackReason: cachedFailure.reason || 'context_tracks_unreadable'
-      };
-    }
+    return {
+      mode: PLAYBACK_LIST_MODES.QUEUE,
+      contextUri,
+      trackUri,
+      tracks: [],
+      sourceType,
+      sourceId,
+      reason: 'context_tracks_unreadable'
+    };
   }
 
   return {
     mode: PLAYBACK_LIST_MODES.QUEUE,
     contextUri,
+    trackUri,
     tracks: [],
-    fallbackReason: 'open_ended_context'
+    sourceType,
+    sourceId,
+    reason: 'open_ended_context'
   };
 }
 
@@ -847,63 +886,41 @@ async function playSelectedTile() {
 
   const selectionRequestId = ++state.playSelectionRequestId;
 
-  if (tile.type === 'song') {
-    state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
-    state.currentSourceType = tile.type;
-    state.currentSourceId = tile.id;
-    state.currentContextUri = '';
-    state.currentList = [tile.track];
-    state.currentIndex = 0;
-    updateTrackList();
-    const started = await playTrackUri(tile.track.uri);
-    if (started) {
-      state.currentSourceType = tile.type;
-    }
-    return;
-  }
-
-  state.currentSourceType = tile.type;
-  state.currentSourceId = tile.id;
-  state.currentIndex = 0;
-  const playbackContext = await preparePlaybackContext(tile);
+  const playbackPlan = await buildPlaybackPlan(tile);
   if (selectionRequestId !== state.playSelectionRequestId) {
     return;
   }
 
-  state.currentContextUri = playbackContext.contextUri;
-  state.playbackListMode = playbackContext.mode;
-  state.currentList = playbackContext.tracks;
-  if (playbackContext.tracks.length) {
+  state.currentSourceType = playbackPlan.sourceType;
+  state.currentSourceId = playbackPlan.sourceId;
+  state.currentContextUri = playbackPlan.contextUri;
+  state.playbackListMode = playbackPlan.mode;
+  state.currentList = playbackPlan.tracks;
+  state.currentIndex = 0;
+  if (playbackPlan.tracks.length) {
     updateTrackList();
   } else {
     clearTrackList();
   }
 
   if (
-    playbackContext.fallbackReason &&
-    playbackContext.mode === PLAYBACK_LIST_MODES.QUEUE &&
-    playbackContext.fallbackReason !== 'tracklist_unreadable' &&
-    playbackContext.fallbackReason !== 'album_metadata_unreadable'
+    playbackPlan.reason &&
+    playbackPlan.mode === PLAYBACK_LIST_MODES.QUEUE &&
+    playbackPlan.reason !== 'context_tracks_unreadable'
   ) {
-    logFallback(playbackContext.fallbackReason, {
+    logFallback(playbackPlan.reason, {
       type: tile.type,
       id: tile.id,
-      contextUri: playbackContext.contextUri,
+      contextUri: playbackPlan.contextUri,
       action: 'queue'
     });
   }
 
-  await setPlaybackRepeatMode('off');
   if (selectionRequestId !== state.playSelectionRequestId) {
     return;
   }
 
-  const started = await playContextUri(playbackContext.contextUri);
-  if (started && state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE) {
-    await setPlaybackRepeatMode('context');
-  } else if (started && state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
-    await syncQueueFromLocalPlayer();
-  }
+  await startPlayback(playbackPlan);
 }
 
 async function onTrackStep(direction) {
@@ -1219,18 +1236,22 @@ function parseTrackRecord(value) {
   return serializeTrackRecord(parsed, parsed);
 }
 
-function loadPreviousTrackFromStorage() {
-  const savedPreviousTrack = parseTrackRecord(getStorageItem(PREVIOUS_TRACK_STORAGE_KEY));
-  state.previousTrackName = savedPreviousTrack.name;
-  state.previousTrackUri = savedPreviousTrack.uri;
-  state.previousTrackImage = savedPreviousTrack.image;
-  state.previousTrackImageWidth = savedPreviousTrack.imageWidth;
-  state.previousTrackImageHeight = savedPreviousTrack.imageHeight;
-  state.previousTrackContextUri = savedPreviousTrack.contextUri;
-  state.previousTrackSourceType = savedPreviousTrack.sourceType;
-  state.previousTrackSourceId = savedPreviousTrack.sourceId;
-  state.previousTrackPlaybackListMode = savedPreviousTrack.playbackListMode;
+function applyPreviousTrackRecord(trackRecord) {
+  const previousTrack = trackRecord || emptyTrackRecord();
+  state.previousTrackName = previousTrack.name;
+  state.previousTrackUri = previousTrack.uri;
+  state.previousTrackImage = previousTrack.image;
+  state.previousTrackImageWidth = previousTrack.imageWidth;
+  state.previousTrackImageHeight = previousTrack.imageHeight;
+  state.previousTrackContextUri = previousTrack.contextUri;
+  state.previousTrackSourceType = previousTrack.sourceType;
+  state.previousTrackSourceId = previousTrack.sourceId;
+  state.previousTrackPlaybackListMode = previousTrack.playbackListMode;
   renderPreviousTrack();
+}
+
+function loadPreviousTrackFromStorage() {
+  applyPreviousTrackRecord(parseTrackRecord(getStorageItem(PREVIOUS_TRACK_STORAGE_KEY)));
 }
 
 function loadCurrentTrackFromStorage() {
@@ -1257,16 +1278,7 @@ async function hydrateCurrentTrackFromSpotify() {
 function savePreviousTrack(track, playbackContext) {
   const previousTrack = serializeTrackRecord(track, playbackContext);
 
-  state.previousTrackName = previousTrack.name;
-  state.previousTrackUri = previousTrack.uri;
-  state.previousTrackImage = previousTrack.image;
-  state.previousTrackImageWidth = previousTrack.imageWidth;
-  state.previousTrackImageHeight = previousTrack.imageHeight;
-  state.previousTrackContextUri = previousTrack.contextUri;
-  state.previousTrackSourceType = previousTrack.sourceType;
-  state.previousTrackSourceId = previousTrack.sourceId;
-  state.previousTrackPlaybackListMode = previousTrack.playbackListMode;
-  renderPreviousTrack();
+  applyPreviousTrackRecord(previousTrack);
 
   try {
     setStorageItem(PREVIOUS_TRACK_STORAGE_KEY, JSON.stringify(previousTrack));
@@ -1381,7 +1393,7 @@ function updateTrackListFromPlayerState(sdkState) {
   }
   applyPlaybackContextUri(sdkState.context && sdkState.context.uri ? sdkState.context.uri : '');
   state.activePlaybackDeviceId = state.deviceId || '';
-  updateCurrentTrackSnapshot(normalizePlayerTrack(currentTrack), {
+  updateCurrentTrackSnapshot(normalizeTrackLike(currentTrack), {
     artists: currentTrack.artists,
     isPlaying: !sdkState.paused,
     positionMs: sdkState.position || 0,
@@ -1439,10 +1451,6 @@ function renderPlaybackProgress(positionOverrideMs) {
   ui.progressBar.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
 }
 
-function normalizePlayerTrack(track) {
-  return normalizeTrackLike(track);
-}
-
 function normalizeTrackLike(track, fallbackImage) {
   const albumImages = track && track.album && track.album.images ? track.album.images : null;
   const image = albumImages ? normalizeAlbumArt(albumImages) : (fallbackImage || createFallbackImage(ALBUM_ART_IMAGE_SIZE));
@@ -1487,7 +1495,7 @@ async function syncQueueState(currentTrack) {
       }, 'warn');
       return;
     }
-    const queueTracks = queueData && queueData.queue ? queueData.queue.map(normalizeQueueTrack) : [];
+    const queueTracks = queueData && queueData.queue ? queueData.queue.map((track) => normalizeTrackLike(track)) : [];
     if (!queueTracks.length) {
       logFallback('queue_sync_empty', {
         path: '/me/player/queue',
@@ -1509,15 +1517,6 @@ async function syncQueueState(currentTrack) {
   }
 }
 
-async function syncQueueFromLocalPlayer() {
-  if (!state.player) {
-    return;
-  }
-
-  const currentTrack = await syncCurrentTrackFromLocalPlayer();
-  await syncQueueState(currentTrack);
-}
-
 async function syncCurrentTrackFromLocalPlayer(expectedUri) {
   if (!state.player) {
     return null;
@@ -1527,7 +1526,7 @@ async function syncCurrentTrackFromLocalPlayer(expectedUri) {
     await pauseForUi();
     const sdkState = await state.player.getCurrentState();
     if (sdkState && sdkState.track_window && sdkState.track_window.current_track) {
-      const currentTrack = normalizePlayerTrack(sdkState.track_window.current_track);
+      const currentTrack = normalizeTrackLike(sdkState.track_window.current_track);
       if (expectedUri && currentTrack.uri && currentTrack.uri !== expectedUri && attempt < 2) {
         await new Promise((resolve) => {
           window.setTimeout(resolve, 300);
@@ -1563,10 +1562,6 @@ function syncSourceListState(currentTrack) {
     }
   }
   updateTrackList();
-}
-
-function normalizeQueueTrack(track) {
-  return normalizeTrackLike(track);
 }
 
 function dedupeTracksByUri(tracks) {
@@ -1819,17 +1814,19 @@ async function loadFavorites() {
       image: image.url,
       imageWidth: image.width,
       imageHeight: image.height,
-      track: normalizeTrack(item.track)
+      track: normalizeTrackLike(item.track)
     });
   };
   const playlistsMapper = (item) => {
     const image = normalizeTileImage(item.images);
+    const ownerId = item.owner && item.owner.id ? item.owner.id : '';
     return ({
       type: 'playlist',
       id: item.id,
       image: image.url,
       imageWidth: image.width,
-      imageHeight: image.height
+      imageHeight: image.height,
+      ownerId
     });
   };
   const artistsMapper = (item) => {
@@ -1983,12 +1980,15 @@ async function playTrackAtIndex(index) {
     return false;
   }
 
-  let started = false;
-  if (state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
-    started = await playTrackUri(trackUri);
-  } else {
-    started = await playTrackFromCurrentContext(trackUri);
-  }
+  const started = await startPlayback({
+    mode: state.playbackListMode || PLAYBACK_LIST_MODES.QUEUE,
+    contextUri: state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE ? getCurrentSourceContextUri() : '',
+    trackUri,
+    tracks: state.currentList,
+    sourceType: state.currentSourceType || '',
+    sourceId: state.currentSourceId || '',
+    reason: 'tracklist_row'
+  });
   if (started && state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
     state.currentIndex = index;
     updateTrackList();
@@ -1998,11 +1998,6 @@ async function playTrackAtIndex(index) {
 
 async function fetchContextTracks(type, id) {
   const cacheKey = type + ':' + id;
-  const cachedFailure = getUnreadableContext(type, id);
-  if (cachedFailure) {
-    return [];
-  }
-
   if (state.contextTrackCache[cacheKey]) {
     return state.contextTrackCache[cacheKey];
   }
@@ -2024,12 +2019,14 @@ async function fetchContextTracks(type, id) {
       }
     });
     if (!data) {
-      markUnreadableContext(type, id, {
-        reason: 'tracklist_unreadable',
+      logFallback('context_tracks_unreadable', {
+        type,
+        id,
         path: nextPath,
         status: resourceError && resourceError.status ? resourceError.status : 'resource_error',
-        detail: resourceError && resourceError.detail ? resourceError.detail : ''
-      });
+        detail: resourceError && resourceError.detail ? resourceError.detail : 'tracklist_unreadable',
+        action: 'queue'
+      }, 'warn');
       break;
     }
 
@@ -2045,7 +2042,7 @@ async function fetchContextTracks(type, id) {
   if (type === 'playlist') {
     const tracks = collectedItems
       .filter((entry) => entry.track && entry.track.uri)
-      .map((entry) => normalizeTrack(entry.track));
+      .map((entry) => normalizeTrackLike(entry.track));
     state.contextTrackCache[cacheKey] = tracks;
     return tracks;
   }
@@ -2059,12 +2056,14 @@ async function fetchContextTracks(type, id) {
     }
   });
   if (!album) {
-    markUnreadableContext(type, id, {
-      reason: 'album_metadata_unreadable',
+    logFallback('context_tracks_unreadable', {
+      type,
+      id,
       path: '/albums/' + id,
       status: albumResourceError && albumResourceError.status ? albumResourceError.status : 'resource_error',
-      detail: albumResourceError && albumResourceError.detail ? albumResourceError.detail : ''
-    });
+      detail: albumResourceError && albumResourceError.detail ? albumResourceError.detail : 'album_metadata_unreadable',
+      action: 'queue'
+    }, 'warn');
     return [];
   }
   const image = normalizeAlbumArt(album.images);
@@ -2076,138 +2075,54 @@ async function fetchContextTracks(type, id) {
   return tracks;
 }
 
-function isUnreadableContext(type, id) {
-  return !!getUnreadableContext(type, id);
-}
-
-function getUnreadableContext(type, id) {
-  return state.unreadableContextCache[type + ':' + id] || null;
-}
-
-function markUnreadableContext(type, id, metadata) {
-  const cacheKey = type + ':' + id;
-  if (state.unreadableContextCache[cacheKey]) {
-    return;
-  }
-
-  const fallback = {
-    reason: metadata && metadata.reason ? metadata.reason : 'context_tracks_unreadable',
-    firstFailedAt: Date.now(),
-    status: metadata && metadata.status ? metadata.status : '',
-    path: metadata && metadata.path ? metadata.path : '',
-    detail: metadata && metadata.detail ? metadata.detail : ''
-  };
-  state.unreadableContextCache[cacheKey] = fallback;
-  logFallback('context_tracks_unreadable', {
-    type,
-    id,
-    path: fallback.path,
-    status: fallback.status,
-    detail: fallback.detail || fallback.reason,
-    action: 'queue'
-  }, 'warn');
-}
-
-async function fetchArtistTracks(artistId) {
-  if (state.artistTrackCache[artistId]) {
-    return state.artistTrackCache[artistId];
-  }
-
-  const top = await spotifyGet('/artists/' + artistId + '/top-tracks?market=' + encodeURIComponent(state.market), {
-    allowResourceErrors: true
-  });
-  if (!top) {
-    logFallback('artist_tracks_empty', {
-      type: 'artist',
-      id: artistId,
-      path: '/artists/' + artistId + '/top-tracks',
-      status: 'resource_error',
-      action: 'queue'
-    }, 'warn');
-    return [];
-  }
-  const topTracks = (top.tracks || []).map(normalizeTrack);
-  if (topTracks.length) {
-    state.artistTrackCache[artistId] = topTracks;
-    return topTracks;
-  }
-  logFallback('artist_top_tracks_empty', {
-    type: 'artist',
-    id: artistId,
-    action: 'album_scan'
-  });
-
-  const albumsData = await spotifyGet('/artists/' + artistId + '/albums?include_groups=album,single&limit=50', {
-    allowResourceErrors: true
-  });
-  if (!albumsData) {
-    logFallback('artist_album_scan_failed', {
-      type: 'artist',
-      id: artistId,
-      path: '/artists/' + artistId + '/albums',
-      status: 'resource_error',
-      action: 'queue'
-    }, 'warn');
-    return [];
-  }
-  const albums = albumsData.items || [];
-  const trackMap = {};
-  const fetchTasks = albums.map(async (album) => {
-    const tracksData = await spotifyGet('/albums/' + album.id + '/tracks?limit=50', { allowResourceErrors: true });
-    if (!tracksData) {
-      logFallback('artist_album_tracks_unreadable', {
-        type: 'album',
-        id: album.id,
-        path: '/albums/' + album.id + '/tracks',
-        status: 'resource_error',
-        action: 'skip_album'
-      }, 'warn');
-      return { tracks: [], image: normalizeAlbumArt(album.images) };
-    }
-    const tracks = tracksData.items || [];
-    const image = normalizeAlbumArt(album.images);
-    return { tracks, image };
-  });
-
-  const albumTracks = await Promise.all(fetchTasks);
-  albumTracks.forEach(({ tracks, image }) => {
-    tracks.forEach((track) => {
-      if (!trackMap[track.id]) {
-        trackMap[track.id] = normalizeTrackLike(track, image);
-      }
-    });
-  });
-
-  const tracks = Object.values(trackMap);
-  if (!tracks.length) {
-    logFallback('artist_tracks_empty', {
-      type: 'artist',
-      id: artistId,
-      action: 'queue'
-    });
-  }
-  state.artistTrackCache[artistId] = tracks;
-  return tracks;
-}
-
-async function playSpotify(options) {
-  const playOptions = options || {};
+async function startPlayback(plan) {
+  const playbackPlan = plan || {};
   const deviceId = state.deviceId;
-  if (!deviceId || !playOptions.body) {
+  const mode = playbackPlan.mode || PLAYBACK_LIST_MODES.QUEUE;
+  const contextUri = playbackPlan.contextUri || '';
+  const trackUri = playbackPlan.trackUri || '';
+  let bodyObject = null;
+
+  if (trackUri && mode === PLAYBACK_LIST_MODES.SOURCE && playbackPlan.sourceType !== 'song' && !contextUri) {
+    logFallback('source_context_missing', {
+      trackUri,
+      action: 'skip_single_track_fallback'
+    }, 'warn');
+    return false;
+  }
+
+  if (trackUri && mode === PLAYBACK_LIST_MODES.SOURCE && contextUri) {
+    bodyObject = {
+      context_uri: contextUri,
+      offset: { uri: trackUri },
+      position_ms: 0
+    };
+  } else if (trackUri) {
+    bodyObject = {
+      uris: [trackUri],
+      position_ms: 0
+    };
+  } else if (contextUri) {
+    bodyObject = {
+      context_uri: contextUri
+    };
+  }
+
+  if (!deviceId || !bodyObject) {
     return false;
   }
 
   const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
   if (!tookOver) {
     logFallback('local_state_delayed', {
-      contextUri: playOptions.contextUri,
-      trackUri: playOptions.expectedUri,
+      contextUri,
+      trackUri,
       action: 'transfer_failed'
     }, 'warn');
     return false;
   }
 
-  const body = JSON.stringify(playOptions.body);
+  const body = JSON.stringify(bodyObject);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await fetch(spotifyApiProxyUrl('/me/player/play?device_id=' + encodeURIComponent(deviceId)), {
@@ -2227,13 +2142,13 @@ async function playSpotify(options) {
 
     if (isNonFatalSpotifyStatus(response.status)) {
       logFallback('context_playback_rejected', {
-        contextUri: playOptions.contextUri,
-        trackUri: playOptions.expectedUri,
+        contextUri,
+        trackUri,
         status: response.status,
-        action: playOptions.fallbackAction || 'stop'
+        action: 'stop'
       }, 'warn');
       await handleNonFatalSpotifyResponse(response, 'This item is unavailable for the current Spotify account');
-      if (playOptions.clearTrackListOnReject) {
+      if (!trackUri) {
         clearTrackList();
       }
       return false;
@@ -2241,8 +2156,8 @@ async function playSpotify(options) {
 
     if (!response.ok) {
       logFallback('context_playback_rejected', {
-        contextUri: playOptions.contextUri,
-        trackUri: playOptions.expectedUri,
+        contextUri,
+        trackUri,
         status: response.status,
         action: 'reconnect'
       }, 'warn');
@@ -2253,16 +2168,20 @@ async function playSpotify(options) {
 
     setPlayingState(true);
     state.activePlaybackDeviceId = state.deviceId;
-    const currentTrack = await syncCurrentTrackFromLocalPlayer(playOptions.expectedUri);
+    const currentTrack = await syncCurrentTrackFromLocalPlayer(trackUri);
     if (!currentTrack) {
       logFallback('local_state_delayed', {
-        contextUri: playOptions.contextUri,
-        trackUri: playOptions.expectedUri,
+        contextUri,
+        trackUri,
         action: 'state_sync_pending'
       });
     }
-    if (playOptions.repeatMode) {
-      await setPlaybackRepeatMode(playOptions.repeatMode);
+    if (mode === PLAYBACK_LIST_MODES.SOURCE) {
+      await setPlaybackRepeatMode('context');
+      syncSourceListState(currentTrack);
+    } else {
+      await setPlaybackRepeatMode('off');
+      await syncQueueState(currentTrack);
     }
     return true;
   }
@@ -2270,105 +2189,28 @@ async function playSpotify(options) {
   return false;
 }
 
-async function playContextUri(contextUri) {
-  if (!contextUri) {
-    return false;
-  }
-
-  return playSpotify({
-    body: {
-      context_uri: contextUri
-    },
-    contextUri,
-    repeatMode: 'off',
-    clearTrackListOnReject: true
-  });
-}
-
-async function playTrackFromCurrentContext(trackUri) {
-  return playTrackInContext(getCurrentSourceContextUri(), trackUri);
-}
-
-async function playTrackInContext(contextUri, trackUri) {
-  if (!trackUri || !contextUri) {
-    return playTrackUri(trackUri);
-  }
-
-  return playSpotify({
-    body: {
-      context_uri: contextUri,
-      offset: { uri: trackUri },
-      position_ms: 0
-    },
-    contextUri,
-    expectedUri: trackUri,
-    repeatMode: state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE ? 'context' : 'off',
-    fallbackAction: 'track_uri'
-  });
-}
-
 async function playTrackFromSavedRecord(record) {
   if (!record || !record.uri) {
     return false;
   }
 
-  const savedContextUri = record.contextUri || '';
-  const savedSourceType = record.sourceType || '';
-  const savedSourceId = record.sourceId || '';
-  const savedPlaybackMode = record.playbackListMode || PLAYBACK_LIST_MODES.SOURCE;
-
-  if (savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE && (savedSourceType === 'playlist' || savedSourceType === 'album') && savedSourceId) {
-    const tracks = await fetchContextTracks(savedSourceType, savedSourceId);
-    if (tracks.length) {
-      state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
-      state.currentSourceType = savedSourceType;
-      state.currentSourceId = savedSourceId;
-      state.currentContextUri = savedContextUri || ('spotify:' + savedSourceType + ':' + savedSourceId);
-      state.currentList = tracks;
-      const trackIndex = tracks.findIndex((track) => track && track.uri === record.uri);
-      state.currentIndex = trackIndex === -1 ? 0 : trackIndex;
-      updateTrackList();
-    }
-
-    if (state.currentContextUri) {
-      const started = await playTrackInContext(state.currentContextUri, record.uri);
-      if (started) {
-        return true;
-      }
-    }
-    if (savedContextUri) {
-      if (savedSourceType === 'playlist' || savedSourceType === 'album') {
-        state.currentList = [];
-        state.currentIndex = 0;
-        clearTrackList();
-      }
-      const started = await playContextUri(savedContextUri);
-      if (started && savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE) {
-        await setPlaybackRepeatMode('context');
-      }
-      return started;
-    }
+  const playbackPlan = await buildPlaybackPlan(record);
+  state.playbackListMode = playbackPlan.mode;
+  state.currentSourceType = playbackPlan.sourceType || state.currentSourceType;
+  state.currentSourceId = playbackPlan.sourceId || state.currentSourceId;
+  state.currentContextUri = playbackPlan.contextUri;
+  state.currentList = playbackPlan.tracks;
+  state.currentIndex = playbackPlan.tracks.findIndex((track) => track && track.uri === record.uri);
+  if (state.currentIndex === -1) {
+    state.currentIndex = 0;
+  }
+  if (state.currentList.length) {
+    updateTrackList();
+  } else {
+    clearTrackList();
   }
 
-  if (savedContextUri) {
-    state.currentContextUri = savedContextUri;
-    state.currentSourceType = savedSourceType || state.currentSourceType;
-    state.currentSourceId = savedSourceId || state.currentSourceId;
-    if (savedPlaybackMode === PLAYBACK_LIST_MODES.QUEUE || savedSourceType === 'artist') {
-      state.playbackListMode = PLAYBACK_LIST_MODES.QUEUE;
-    } else if (savedSourceType === 'playlist' || savedSourceType === 'album' || savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE) {
-      state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
-    }
-    if (savedPlaybackMode === PLAYBACK_LIST_MODES.QUEUE || savedSourceType === 'artist' || savedSourceType === 'playlist' || savedSourceType === 'album') {
-      const started = await playContextUri(savedContextUri);
-      if (started && savedPlaybackMode === PLAYBACK_LIST_MODES.SOURCE) {
-        await setPlaybackRepeatMode('context');
-      }
-      return started;
-    }
-  }
-
-  return playTrackUri(record.uri);
+  return startPlayback(playbackPlan);
 }
 
 async function playCurrentSourceTrackStep(delta) {
@@ -2379,25 +2221,6 @@ async function playCurrentSourceTrackStep(delta) {
   const count = state.currentList.length;
   const nextIndex = ((state.currentIndex + delta) % count + count) % count;
   return playTrackAtIndex(nextIndex);
-}
-
-async function playTrackUri(trackUri) {
-  if (!trackUri) {
-    return false;
-  }
-
-  return playSpotify({
-    body: {
-      uris: [trackUri],
-      position_ms: 0
-    },
-    expectedUri: trackUri,
-    repeatMode: 'context'
-  });
-}
-
-function normalizeTrack(track) {
-  return normalizeTrackLike(track);
 }
 
 function normalizeTileImage(images) {
