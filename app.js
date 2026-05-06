@@ -92,7 +92,9 @@ const TILE_IMAGE_DOWNLOAD_SIZE = 100;
 const ALBUM_ART_IMAGE_SIZE = 160;
 const TRACK_THUMBNAIL_SIZE = 40;
 const MAX_RENDERED_TRACKS = 40;
+const CURRENT_TRACK_STORAGE_KEY = 'current_track';
 const PREVIOUS_TRACK_STORAGE_KEY = 'previous_track';
+const DEBUG_SPOTIFY_FALLBACKS = true;
 const SERVICE_WORKER_UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const TAKEOVER_CONFIRMATION_TIMEOUT_MS = 5000;
 const TAKEOVER_CONFIRMATION_POLL_MS = 250;
@@ -129,6 +131,7 @@ const state = {
   currentSourceId: '',
   playbackListMode: PLAYBACK_LIST_MODES.SOURCE,
   contextTrackCache: {},
+  unreadableContextCache: {},
   artistTrackCache: {},
   playSelectionRequestId: 0,
   healthcheckInFlight: false,
@@ -141,6 +144,11 @@ const state = {
   renderedStatusMessage: '',
   renderedTrackTitle: '',
   renderedTrackArtist: '',
+  currentTrackName: '',
+  currentTrackUri: '',
+  currentTrackImage: '',
+  currentTrackImageWidth: 0,
+  currentTrackImageHeight: 0,
   previousTrackName: '',
   previousTrackUri: '',
   previousTrackImage: '',
@@ -330,6 +338,28 @@ function removeStorageItem(key) {
   }
 }
 
+function logFallback(reason, details, level) {
+  if (!DEBUG_SPOTIFY_FALLBACKS || !window.console) {
+    return;
+  }
+
+  const logger = level === 'warn' ? console.warn : console.info;
+  logger.call(console, '[spotify-fallback] ' + reason, sanitizeFallbackDetails(details || {}));
+}
+
+function sanitizeFallbackDetails(details) {
+  const safe = {};
+  const allowedKeys = ['type', 'id', 'path', 'status', 'detail', 'action', 'mode', 'contextUri', 'trackUri'];
+
+  allowedKeys.forEach((key) => {
+    if (details[key] !== undefined && details[key] !== null && details[key] !== '') {
+      safe[key] = String(details[key]);
+    }
+  });
+
+  return safe;
+}
+
 function installGlobalErrorHandlers() {
   window.addEventListener('error', (event) => {
     const detail = 'Startup failed during ' + state.startupStep + ': ' + describeError(event.error || event.message);
@@ -385,6 +415,7 @@ async function init() {
 
   bindUiEvents();
   setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
+  loadCurrentTrackFromStorage();
   loadPreviousTrackFromStorage();
   ui.btnPlayPause.classList.remove('is-active');
   transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Checking Spotify authorization...');
@@ -416,6 +447,7 @@ async function init() {
     transitionConnection(CONNECTION_STATES.AUTHORIZING, 'Loading Spotify account...');
     setStartupStep('loading Spotify account');
     await loadUserMarket();
+    await hydrateCurrentTrackFromSpotify();
 
     try {
       setStartupStep('loading favorites');
@@ -433,6 +465,7 @@ async function init() {
 
     try {
       await initSpotifyPlayer();
+      await primeLocalPlaybackDevice();
     } catch (error) {
       if (!isRecoverablePlayerInitError(error)) {
         throw error;
@@ -597,6 +630,20 @@ async function transferPlaybackToLocalDevice(shouldPlay) {
   return confirmLocalPlaybackDevice(shouldPlay);
 }
 
+async function primeLocalPlaybackDevice() {
+  if (!state.deviceId) {
+    return;
+  }
+
+  const shouldPlay = !!state.isPlaying;
+  const tookOver = await transferPlaybackToLocalDevice(shouldPlay);
+  if (!tookOver) {
+    return;
+  }
+
+  await syncCurrentTrackFromLocalPlayer(state.currentTrackUri);
+}
+
 async function confirmLocalPlaybackDevice(shouldPlay) {
   const deadline = Date.now() + TAKEOVER_CONFIRMATION_TIMEOUT_MS;
 
@@ -677,25 +724,104 @@ function getCurrentPlaybackContextRecord() {
   };
 }
 
+function applyPlaybackContextUri(contextUri) {
+  state.currentContextUri = contextUri || '';
+  const parts = state.currentContextUri.split(':');
+  if (parts.length >= 3 && parts[0] === 'spotify') {
+    state.currentSourceType = parts[1] || state.currentSourceType;
+    state.currentSourceId = parts[2] || state.currentSourceId;
+  }
+}
+
 function setPlayingState(isPlaying) {
   state.isPlaying = !!isPlaying;
   ui.playPauseIcon.className = state.isPlaying ? 'icon icon-pause-circle' : 'icon icon-play-circle';
   ui.btnPlayPause.classList.toggle('is-active', state.isPlaying);
 }
 
-async function refreshPlaybackState() {
-  const playbackState = await spotifyGet('/me/player', { allowResourceErrors: true });
+function applySpotifyPlaybackState(playbackState) {
   if (!playbackState) {
     return;
   }
 
   state.activePlaybackDeviceId = playbackState.device && playbackState.device.id ? playbackState.device.id : '';
+  if (playbackState.context && playbackState.context.uri) {
+    applyPlaybackContextUri(playbackState.context.uri);
+  }
   setPlayingState(!!playbackState.is_playing);
   if (playbackState.item) {
-    const artists = playbackState.item.artists ? playbackState.item.artists.map((artist) => artist.name).join(', ') : '';
-    setTrackMeta(playbackState.item.name || '', artists);
-    setPlaybackProgress(playbackState.progress_ms || 0, playbackState.item.duration_ms || 0, !!playbackState.is_playing);
+    const currentTrack = normalizeTrackLike(playbackState.item);
+    updateCurrentTrackSnapshot(currentTrack, {
+      artists: playbackState.item.artists,
+      isPlaying: !!playbackState.is_playing,
+      positionMs: playbackState.progress_ms || 0,
+      durationMs: playbackState.item.duration_ms || 0,
+      updateAlbumArt: true
+    });
   }
+}
+
+async function preparePlaybackContext(tileOrRecord) {
+  if (!tileOrRecord) {
+    return {
+      mode: PLAYBACK_LIST_MODES.QUEUE,
+      contextUri: '',
+      tracks: [],
+      fallbackReason: 'missing_context'
+    };
+  }
+
+  const type = tileOrRecord.type || tileOrRecord.sourceType || '';
+  const id = tileOrRecord.id || tileOrRecord.sourceId || '';
+  const contextUri = tileOrRecord.contextUri || (type && id ? 'spotify:' + type + ':' + id : '');
+
+  if (type === 'song') {
+    return {
+      mode: PLAYBACK_LIST_MODES.SOURCE,
+      contextUri,
+      tracks: tileOrRecord.track ? [tileOrRecord.track] : [],
+      fallbackReason: ''
+    };
+  }
+
+  if (type === 'artist') {
+    const tracks = id ? await fetchArtistTracks(id) : [];
+    return {
+      mode: PLAYBACK_LIST_MODES.QUEUE,
+      contextUri,
+      tracks,
+      fallbackReason: 'artist_queue_mode'
+    };
+  }
+
+  if ((type === 'playlist' || type === 'album') && id) {
+    const tracks = await fetchContextTracks(type, id);
+    if (tracks.length) {
+      return {
+        mode: PLAYBACK_LIST_MODES.SOURCE,
+        contextUri,
+        tracks,
+        fallbackReason: ''
+      };
+    }
+
+    const cachedFailure = getUnreadableContext(type, id);
+    if (cachedFailure) {
+      return {
+        mode: PLAYBACK_LIST_MODES.QUEUE,
+        contextUri,
+        tracks: [],
+        fallbackReason: cachedFailure.reason || 'context_tracks_unreadable'
+      };
+    }
+  }
+
+  return {
+    mode: PLAYBACK_LIST_MODES.QUEUE,
+    contextUri,
+    tracks: [],
+    fallbackReason: 'open_ended_context'
+  };
 }
 
 function moveSelection(delta) {
@@ -739,31 +865,44 @@ async function playSelectedTile() {
   state.currentSourceType = tile.type;
   state.currentSourceId = tile.id;
   state.currentIndex = 0;
-  state.currentContextUri = 'spotify:' + tile.type + ':' + tile.id;
-
-  if (tile.type === 'artist') {
-    state.playbackListMode = PLAYBACK_LIST_MODES.QUEUE;
-    state.currentList = [];
-    clearTrackList();
-  } else {
-    state.playbackListMode = PLAYBACK_LIST_MODES.SOURCE;
-    const tracks = await fetchContextTracks(tile.type, tile.id);
-    if (selectionRequestId !== state.playSelectionRequestId) {
-      return;
-    }
-    state.currentList = tracks;
-    updateTrackList();
+  const playbackContext = await preparePlaybackContext(tile);
+  if (selectionRequestId !== state.playSelectionRequestId) {
+    return;
   }
 
-  setAlbumArtImage(tileToAlbumArtImage(tile));
+  state.currentContextUri = playbackContext.contextUri;
+  state.playbackListMode = playbackContext.mode;
+  state.currentList = playbackContext.tracks;
+  if (playbackContext.tracks.length) {
+    updateTrackList();
+  } else {
+    clearTrackList();
+  }
+
+  if (
+    playbackContext.fallbackReason &&
+    playbackContext.mode === PLAYBACK_LIST_MODES.QUEUE &&
+    playbackContext.fallbackReason !== 'tracklist_unreadable' &&
+    playbackContext.fallbackReason !== 'album_metadata_unreadable'
+  ) {
+    logFallback(playbackContext.fallbackReason, {
+      type: tile.type,
+      id: tile.id,
+      contextUri: playbackContext.contextUri,
+      action: 'queue'
+    });
+  }
+
   await setPlaybackRepeatMode('off');
   if (selectionRequestId !== state.playSelectionRequestId) {
     return;
   }
 
-  const started = await playContextUri('spotify:' + tile.type + ':' + tile.id);
+  const started = await playContextUri(playbackContext.contextUri);
   if (started && state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE) {
     await setPlaybackRepeatMode('context');
+  } else if (started && state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
+    await syncQueueFromLocalPlayer();
   }
 }
 
@@ -773,17 +912,15 @@ async function onTrackStep(direction) {
   }
 
   try {
-    const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
-    if (!tookOver) {
-      return;
-    }
-
-    await pauseForUi();
     const localState = await state.player.getCurrentState();
     if (localState) {
       state.lastPlayerState = localState;
     }
-    await refreshPlaybackState();
+
+    const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
+    if (!tookOver) {
+      return;
+    }
 
     if (direction < 0) {
       if (shouldUseSpotifyPreviousTrack()) {
@@ -791,6 +928,11 @@ async function onTrackStep(direction) {
         await state.player.previousTrack();
         await state.player.resume();
       } else if (await playSavedPreviousTrack()) {
+        logFallback('previous_track_saved_record', {
+          trackUri: state.previousTrackUri,
+          contextUri: state.previousTrackContextUri,
+          action: 'play_saved_previous'
+        });
         return;
       }
     } else if (state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
@@ -800,9 +942,6 @@ async function onTrackStep(direction) {
     } else {
       await playCurrentSourceTrackStep(1);
     }
-
-    await pauseForUi();
-    await refreshPlaybackState();
   } catch (error) {
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Playback device unavailable');
     scheduleReconnect('Track step failed');
@@ -820,12 +959,12 @@ async function onTogglePlayPause() {
       if (!tookOver) {
         return;
       }
-      await refreshPlaybackState();
+      await syncCurrentTrackFromLocalPlayer(state.currentTrackUri);
       return;
     }
 
     await state.player.togglePlay();
-    await refreshPlaybackState();
+    setPlayingState(!state.isPlaying);
   } catch (error) {
     transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Playback device unavailable');
     scheduleReconnect('Playback toggle failed');
@@ -990,8 +1129,6 @@ function updateTrackList() {
     updateRenderedTrackText();
   }
 
-  const currentTrack = state.currentTrackForPrevious;
-  setAlbumArtImage(currentTrack ? trackToAlbumArtImage(currentTrack) : createFallbackImage(ALBUM_ART_IMAGE_SIZE));
 }
 
 function clearTrackList() {
@@ -1032,67 +1169,58 @@ function updateTrackListItem(node, track, isNowPlaying) {
   }
 }
 
-function parsePreviousTrackRecord(value) {
+function emptyTrackRecord() {
+  return {
+    uri: '',
+    name: '',
+    image: '',
+    imageWidth: 0,
+    imageHeight: 0,
+    contextUri: '',
+    sourceType: '',
+    sourceId: '',
+    playbackListMode: PLAYBACK_LIST_MODES.SOURCE
+  };
+}
+
+function serializeTrackRecord(track, playbackContext) {
+  const context = playbackContext || getCurrentPlaybackContextRecord();
+  return {
+    uri: track && track.uri ? track.uri : '',
+    name: track && track.name ? track.name : '',
+    image: track && track.image ? track.image : '',
+    imageWidth: track && Number.isFinite(track.imageWidth) ? track.imageWidth : 0,
+    imageHeight: track && Number.isFinite(track.imageHeight) ? track.imageHeight : 0,
+    contextUri: context && context.contextUri ? context.contextUri : '',
+    sourceType: context && context.sourceType ? context.sourceType : '',
+    sourceId: context && context.sourceId ? context.sourceId : '',
+    playbackListMode: context && context.playbackListMode === PLAYBACK_LIST_MODES.QUEUE
+      ? PLAYBACK_LIST_MODES.QUEUE
+      : PLAYBACK_LIST_MODES.SOURCE
+  };
+}
+
+function parseTrackRecord(value) {
   if (!value) {
-    return {
-      uri: '',
-      name: '',
-      image: '',
-      imageWidth: 0,
-      imageHeight: 0,
-      contextUri: '',
-      sourceType: '',
-      sourceId: '',
-      playbackListMode: PLAYBACK_LIST_MODES.SOURCE
-    };
+    return emptyTrackRecord();
   }
 
   let parsed;
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    return {
-      uri: '',
-      name: '',
-      image: '',
-      imageWidth: 0,
-      imageHeight: 0,
-      contextUri: '',
-      sourceType: '',
-      sourceId: '',
-      playbackListMode: PLAYBACK_LIST_MODES.SOURCE
-    };
+    return emptyTrackRecord();
   }
 
   if (!parsed || typeof parsed !== 'object') {
-    return {
-      uri: '',
-      name: '',
-      image: '',
-      imageWidth: 0,
-      imageHeight: 0,
-      contextUri: '',
-      sourceType: '',
-      sourceId: '',
-      playbackListMode: PLAYBACK_LIST_MODES.SOURCE
-    };
+    return emptyTrackRecord();
   }
 
-  return {
-    uri: typeof parsed.uri === 'string' ? parsed.uri : '',
-    name: typeof parsed.name === 'string' ? parsed.name : '',
-    image: typeof parsed.image === 'string' ? parsed.image : '',
-    imageWidth: Number.isFinite(parsed.imageWidth) ? parsed.imageWidth : 0,
-    imageHeight: Number.isFinite(parsed.imageHeight) ? parsed.imageHeight : 0,
-    contextUri: typeof parsed.contextUri === 'string' ? parsed.contextUri : '',
-    sourceType: typeof parsed.sourceType === 'string' ? parsed.sourceType : '',
-    sourceId: typeof parsed.sourceId === 'string' ? parsed.sourceId : '',
-    playbackListMode: parsed.playbackListMode === PLAYBACK_LIST_MODES.QUEUE ? PLAYBACK_LIST_MODES.QUEUE : PLAYBACK_LIST_MODES.SOURCE
-  };
+  return serializeTrackRecord(parsed, parsed);
 }
 
 function loadPreviousTrackFromStorage() {
-  const savedPreviousTrack = parsePreviousTrackRecord(getStorageItem(PREVIOUS_TRACK_STORAGE_KEY));
+  const savedPreviousTrack = parseTrackRecord(getStorageItem(PREVIOUS_TRACK_STORAGE_KEY));
   state.previousTrackName = savedPreviousTrack.name;
   state.previousTrackUri = savedPreviousTrack.uri;
   state.previousTrackImage = savedPreviousTrack.image;
@@ -1103,27 +1231,31 @@ function loadPreviousTrackFromStorage() {
   state.previousTrackSourceId = savedPreviousTrack.sourceId;
   state.previousTrackPlaybackListMode = savedPreviousTrack.playbackListMode;
   renderPreviousTrack();
-  if (savedPreviousTrack.uri || savedPreviousTrack.name || savedPreviousTrack.image) {
-    state.currentTrackForPrevious = savedPreviousTrack;
-    setTrackMeta(savedPreviousTrack.name || 'Nothing playing', '');
-    setAlbumArtImage(trackToAlbumArtImage(savedPreviousTrack));
+}
+
+function loadCurrentTrackFromStorage() {
+  const savedCurrentTrack = parseTrackRecord(getStorageItem(CURRENT_TRACK_STORAGE_KEY));
+  if (!savedCurrentTrack.uri && !savedCurrentTrack.name && !savedCurrentTrack.image) {
+    return;
   }
+
+  state.currentSourceType = savedCurrentTrack.sourceType || state.currentSourceType;
+  state.currentSourceId = savedCurrentTrack.sourceId || state.currentSourceId;
+  state.playbackListMode = savedCurrentTrack.playbackListMode || state.playbackListMode;
+  applyPlaybackContextUri(savedCurrentTrack.contextUri || '');
+  updateCurrentTrackSnapshot(savedCurrentTrack, {
+    updateAlbumArt: true,
+    persist: false
+  });
+}
+
+async function hydrateCurrentTrackFromSpotify() {
+  const playbackState = await spotifyGet('/me/player', { allowResourceErrors: true });
+  applySpotifyPlaybackState(playbackState);
 }
 
 function savePreviousTrack(track, playbackContext) {
-  const previousTrack = {
-    uri: track && track.uri ? track.uri : '',
-    name: track && track.name ? track.name : '',
-    image: track && track.image ? track.image : '',
-    imageWidth: track && Number.isFinite(track.imageWidth) ? track.imageWidth : 0,
-    imageHeight: track && Number.isFinite(track.imageHeight) ? track.imageHeight : 0,
-    contextUri: playbackContext && playbackContext.contextUri ? playbackContext.contextUri : '',
-    sourceType: playbackContext && playbackContext.sourceType ? playbackContext.sourceType : '',
-    sourceId: playbackContext && playbackContext.sourceId ? playbackContext.sourceId : '',
-    playbackListMode: playbackContext && playbackContext.playbackListMode === PLAYBACK_LIST_MODES.QUEUE
-      ? PLAYBACK_LIST_MODES.QUEUE
-      : PLAYBACK_LIST_MODES.SOURCE
-  };
+  const previousTrack = serializeTrackRecord(track, playbackContext);
 
   state.previousTrackName = previousTrack.name;
   state.previousTrackUri = previousTrack.uri;
@@ -1164,6 +1296,54 @@ function renderPreviousTrack() {
   ui.previousTrackImage.height = state.previousTrackImageHeight || TRACK_THUMBNAIL_SIZE;
 }
 
+function saveCurrentTrack(track) {
+  const currentTrack = serializeTrackRecord(track);
+
+  try {
+    setStorageItem(CURRENT_TRACK_STORAGE_KEY, JSON.stringify(currentTrack));
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function updateCurrentTrackSnapshot(track, options) {
+  if (!track) {
+    return;
+  }
+
+  const artists = options && options.artists ? options.artists : null;
+  const artistName = artists && artists.length ? artists.map((artist) => artist.name).join(', ') : '';
+  const shouldUpdateAlbumArt = !options || options.updateAlbumArt !== false;
+  const shouldPersist = !options || options.persist !== false;
+  const hadCurrentTrack = !!(state.currentTrackUri || state.currentTrackName || state.currentTrackImage);
+  const trackChanged = !!track.uri && state.lastKnownTrackUri !== track.uri;
+
+  state.currentTrackName = track.name || '';
+  state.currentTrackUri = track.uri || '';
+  state.currentTrackImage = track.image || '';
+  state.currentTrackImageWidth = track.imageWidth || 0;
+  state.currentTrackImageHeight = track.imageHeight || 0;
+  state.currentTrackForPrevious = track;
+
+  if (trackChanged || !state.lastKnownTrackUri) {
+    state.lastKnownTrackUri = track.uri || state.lastKnownTrackUri;
+  }
+
+  setTrackMeta(track.name || '', artistName);
+
+  if (shouldUpdateAlbumArt && (trackChanged || !hadCurrentTrack || !state.renderedAlbumArtSrc)) {
+    setAlbumArtImage(trackToAlbumArtImage(track));
+  }
+
+  if (options && typeof options.positionMs === 'number' && typeof options.durationMs === 'number') {
+    setPlaybackProgress(options.positionMs, options.durationMs, !!options.isPlaying);
+  }
+
+  if (shouldPersist) {
+    saveCurrentTrack(track);
+  }
+}
+
 async function playSavedPreviousTrack() {
   return playTrackFromSavedRecord({
     uri: state.previousTrackUri,
@@ -1199,13 +1379,15 @@ function updateTrackListFromPlayerState(sdkState) {
       savePreviousTrack(previousTrack, previousPlaybackContext);
     }
   }
-  state.lastKnownTrackUri = currentUri;
-  state.currentTrackForPrevious = normalizePlayerTrack(currentTrack);
-  state.currentContextUri = sdkState.context && sdkState.context.uri ? sdkState.context.uri : '';
+  applyPlaybackContextUri(sdkState.context && sdkState.context.uri ? sdkState.context.uri : '');
   state.activePlaybackDeviceId = state.deviceId || '';
-  const artistName = currentTrack.artists && currentTrack.artists.length ? currentTrack.artists.map((artist) => artist.name).join(', ') : '';
-  setTrackMeta(currentTrack.name || '', artistName);
-  setPlaybackProgress(sdkState.position || 0, currentTrack.duration_ms || 0, !sdkState.paused);
+  updateCurrentTrackSnapshot(normalizePlayerTrack(currentTrack), {
+    artists: currentTrack.artists,
+    isPlaying: !sdkState.paused,
+    positionMs: sdkState.position || 0,
+    durationMs: currentTrack.duration_ms || 0,
+    updateAlbumArt: true
+  });
   if (state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
     syncQueueState(state.currentTrackForPrevious);
   } else {
@@ -1258,10 +1440,15 @@ function renderPlaybackProgress(positionOverrideMs) {
 }
 
 function normalizePlayerTrack(track) {
-  const image = normalizeAlbumArt(track.album && track.album.images);
+  return normalizeTrackLike(track);
+}
+
+function normalizeTrackLike(track, fallbackImage) {
+  const albumImages = track && track.album && track.album.images ? track.album.images : null;
+  const image = albumImages ? normalizeAlbumArt(albumImages) : (fallbackImage || createFallbackImage(ALBUM_ART_IMAGE_SIZE));
   return {
-    uri: track.uri,
-    name: track.name,
+    uri: track && track.uri ? track.uri : '',
+    name: track && track.name ? track.name : '',
     image: image.url,
     imageWidth: image.width,
     imageHeight: image.height
@@ -1292,7 +1479,21 @@ async function syncQueueState(currentTrack) {
   state.queueSyncInFlight = true;
   try {
     const queueData = await spotifyGet('/me/player/queue', { allowResourceErrors: true });
+    if (!queueData) {
+      logFallback('queue_sync_failed', {
+        path: '/me/player/queue',
+        status: 'resource_error',
+        action: 'keep_current_list'
+      }, 'warn');
+      return;
+    }
     const queueTracks = queueData && queueData.queue ? queueData.queue.map(normalizeQueueTrack) : [];
+    if (!queueTracks.length) {
+      logFallback('queue_sync_empty', {
+        path: '/me/player/queue',
+        action: 'clear_tracklist'
+      });
+    }
     const currentUri = state.queueSyncCurrentTrack && state.queueSyncCurrentTrack.uri ? state.queueSyncCurrentTrack.uri : '';
     const nextQueueTracks =
       currentUri && queueTracks.length && queueTracks[0].uri === currentUri ? queueTracks.slice(1) : queueTracks;
@@ -1308,6 +1509,51 @@ async function syncQueueState(currentTrack) {
   }
 }
 
+async function syncQueueFromLocalPlayer() {
+  if (!state.player) {
+    return;
+  }
+
+  const currentTrack = await syncCurrentTrackFromLocalPlayer();
+  await syncQueueState(currentTrack);
+}
+
+async function syncCurrentTrackFromLocalPlayer(expectedUri) {
+  if (!state.player) {
+    return null;
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await pauseForUi();
+    const sdkState = await state.player.getCurrentState();
+    if (sdkState && sdkState.track_window && sdkState.track_window.current_track) {
+      const currentTrack = normalizePlayerTrack(sdkState.track_window.current_track);
+      if (expectedUri && currentTrack.uri && currentTrack.uri !== expectedUri && attempt < 2) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 300);
+        });
+        continue;
+      }
+
+      state.lastPlayerState = sdkState;
+      updateCurrentTrackSnapshot(currentTrack, {
+        artists: sdkState.track_window.current_track.artists,
+        isPlaying: !sdkState.paused,
+        positionMs: sdkState.position || 0,
+        durationMs: sdkState.track_window.current_track.duration_ms || 0,
+        updateAlbumArt: true
+      });
+      return currentTrack;
+    }
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 300);
+    });
+  }
+
+  return null;
+}
+
 function syncSourceListState(currentTrack) {
   const currentUri = currentTrack && currentTrack.uri ? currentTrack.uri : '';
   if (currentUri) {
@@ -1320,7 +1566,7 @@ function syncSourceListState(currentTrack) {
 }
 
 function normalizeQueueTrack(track) {
-  return normalizePlayerTrack(track);
+  return normalizeTrackLike(track);
 }
 
 function dedupeTracksByUri(tracks) {
@@ -1737,19 +1983,26 @@ async function playTrackAtIndex(index) {
     return false;
   }
 
-  state.currentIndex = index;
   let started = false;
   if (state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
     started = await playTrackUri(trackUri);
   } else {
     started = await playTrackFromCurrentContext(trackUri);
   }
-  updateTrackList();
+  if (started && state.playbackListMode === PLAYBACK_LIST_MODES.QUEUE) {
+    state.currentIndex = index;
+    updateTrackList();
+  }
   return started;
 }
 
 async function fetchContextTracks(type, id) {
   const cacheKey = type + ':' + id;
+  const cachedFailure = getUnreadableContext(type, id);
+  if (cachedFailure) {
+    return [];
+  }
+
   if (state.contextTrackCache[cacheKey]) {
     return state.contextTrackCache[cacheKey];
   }
@@ -1762,8 +2015,21 @@ async function fetchContextTracks(type, id) {
   let nextPath = endpoint;
 
   while (nextPath) {
-    const data = await spotifyGet(nextPath, { allowResourceErrors: true });
+    let resourceError = null;
+    const data = await spotifyGet(nextPath, {
+      allowResourceErrors: true,
+      suppressResourceStatus: true,
+      onResourceError: (errorInfo) => {
+        resourceError = errorInfo;
+      }
+    });
     if (!data) {
+      markUnreadableContext(type, id, {
+        reason: 'tracklist_unreadable',
+        path: nextPath,
+        status: resourceError && resourceError.status ? resourceError.status : 'resource_error',
+        detail: resourceError && resourceError.detail ? resourceError.detail : ''
+      });
       break;
     }
 
@@ -1784,23 +2050,62 @@ async function fetchContextTracks(type, id) {
     return tracks;
   }
 
-  const album = await spotifyGet('/albums/' + id, { allowResourceErrors: true });
+  let albumResourceError = null;
+  const album = await spotifyGet('/albums/' + id, {
+    allowResourceErrors: true,
+    suppressResourceStatus: true,
+    onResourceError: (errorInfo) => {
+      albumResourceError = errorInfo;
+    }
+  });
   if (!album) {
+    markUnreadableContext(type, id, {
+      reason: 'album_metadata_unreadable',
+      path: '/albums/' + id,
+      status: albumResourceError && albumResourceError.status ? albumResourceError.status : 'resource_error',
+      detail: albumResourceError && albumResourceError.detail ? albumResourceError.detail : ''
+    });
     return [];
   }
   const image = normalizeAlbumArt(album.images);
 
   const tracks = collectedItems
     .filter((track) => track && track.uri)
-    .map((track) => ({
-      uri: track.uri,
-      name: track.name,
-      image: image.url,
-      imageWidth: image.width,
-      imageHeight: image.height
-    }));
+    .map((track) => normalizeTrackLike(track, image));
   state.contextTrackCache[cacheKey] = tracks;
   return tracks;
+}
+
+function isUnreadableContext(type, id) {
+  return !!getUnreadableContext(type, id);
+}
+
+function getUnreadableContext(type, id) {
+  return state.unreadableContextCache[type + ':' + id] || null;
+}
+
+function markUnreadableContext(type, id, metadata) {
+  const cacheKey = type + ':' + id;
+  if (state.unreadableContextCache[cacheKey]) {
+    return;
+  }
+
+  const fallback = {
+    reason: metadata && metadata.reason ? metadata.reason : 'context_tracks_unreadable',
+    firstFailedAt: Date.now(),
+    status: metadata && metadata.status ? metadata.status : '',
+    path: metadata && metadata.path ? metadata.path : '',
+    detail: metadata && metadata.detail ? metadata.detail : ''
+  };
+  state.unreadableContextCache[cacheKey] = fallback;
+  logFallback('context_tracks_unreadable', {
+    type,
+    id,
+    path: fallback.path,
+    status: fallback.status,
+    detail: fallback.detail || fallback.reason,
+    action: 'queue'
+  }, 'warn');
 }
 
 async function fetchArtistTracks(artistId) {
@@ -1812,6 +2117,13 @@ async function fetchArtistTracks(artistId) {
     allowResourceErrors: true
   });
   if (!top) {
+    logFallback('artist_tracks_empty', {
+      type: 'artist',
+      id: artistId,
+      path: '/artists/' + artistId + '/top-tracks',
+      status: 'resource_error',
+      action: 'queue'
+    }, 'warn');
     return [];
   }
   const topTracks = (top.tracks || []).map(normalizeTrack);
@@ -1819,11 +2131,23 @@ async function fetchArtistTracks(artistId) {
     state.artistTrackCache[artistId] = topTracks;
     return topTracks;
   }
+  logFallback('artist_top_tracks_empty', {
+    type: 'artist',
+    id: artistId,
+    action: 'album_scan'
+  });
 
   const albumsData = await spotifyGet('/artists/' + artistId + '/albums?include_groups=album,single&limit=50', {
     allowResourceErrors: true
   });
   if (!albumsData) {
+    logFallback('artist_album_scan_failed', {
+      type: 'artist',
+      id: artistId,
+      path: '/artists/' + artistId + '/albums',
+      status: 'resource_error',
+      action: 'queue'
+    }, 'warn');
     return [];
   }
   const albums = albumsData.items || [];
@@ -1831,6 +2155,13 @@ async function fetchArtistTracks(artistId) {
   const fetchTasks = albums.map(async (album) => {
     const tracksData = await spotifyGet('/albums/' + album.id + '/tracks?limit=50', { allowResourceErrors: true });
     if (!tracksData) {
+      logFallback('artist_album_tracks_unreadable', {
+        type: 'album',
+        id: album.id,
+        path: '/albums/' + album.id + '/tracks',
+        status: 'resource_error',
+        action: 'skip_album'
+      }, 'warn');
       return { tracks: [], image: normalizeAlbumArt(album.images) };
     }
     const tracks = tracksData.items || [];
@@ -1842,36 +2173,41 @@ async function fetchArtistTracks(artistId) {
   albumTracks.forEach(({ tracks, image }) => {
     tracks.forEach((track) => {
       if (!trackMap[track.id]) {
-        trackMap[track.id] = {
-          uri: track.uri,
-          name: track.name,
-          image: image.url,
-          imageWidth: image.width,
-          imageHeight: image.height
-        };
+        trackMap[track.id] = normalizeTrackLike(track, image);
       }
     });
   });
 
   const tracks = Object.values(trackMap);
+  if (!tracks.length) {
+    logFallback('artist_tracks_empty', {
+      type: 'artist',
+      id: artistId,
+      action: 'queue'
+    });
+  }
   state.artistTrackCache[artistId] = tracks;
   return tracks;
 }
 
-async function playContextUri(contextUri) {
+async function playSpotify(options) {
+  const playOptions = options || {};
   const deviceId = state.deviceId;
-  if (!deviceId) {
+  if (!deviceId || !playOptions.body) {
     return false;
   }
 
   const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
   if (!tookOver) {
+    logFallback('local_state_delayed', {
+      contextUri: playOptions.contextUri,
+      trackUri: playOptions.expectedUri,
+      action: 'transfer_failed'
+    }, 'warn');
     return false;
   }
 
-  const body = JSON.stringify({
-    context_uri: contextUri
-  });
+  const body = JSON.stringify(playOptions.body);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await fetch(spotifyApiProxyUrl('/me/player/play?device_id=' + encodeURIComponent(deviceId)), {
@@ -1890,26 +2226,63 @@ async function playContextUri(contextUri) {
     }
 
     if (isNonFatalSpotifyStatus(response.status)) {
+      logFallback('context_playback_rejected', {
+        contextUri: playOptions.contextUri,
+        trackUri: playOptions.expectedUri,
+        status: response.status,
+        action: playOptions.fallbackAction || 'stop'
+      }, 'warn');
       await handleNonFatalSpotifyResponse(response, 'This item is unavailable for the current Spotify account');
-      clearTrackList();
-      setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
+      if (playOptions.clearTrackListOnReject) {
+        clearTrackList();
+      }
       return false;
     }
 
     if (!response.ok) {
+      logFallback('context_playback_rejected', {
+        contextUri: playOptions.contextUri,
+        trackUri: playOptions.expectedUri,
+        status: response.status,
+        action: 'reconnect'
+      }, 'warn');
       transitionConnection(CONNECTION_STATES.DISCONNECTED, 'Spotify play request failed');
       scheduleReconnect('Play request failed');
       return false;
     }
 
-    await refreshPlaybackState();
     setPlayingState(true);
     state.activePlaybackDeviceId = state.deviceId;
-    await setPlaybackRepeatMode('off');
+    const currentTrack = await syncCurrentTrackFromLocalPlayer(playOptions.expectedUri);
+    if (!currentTrack) {
+      logFallback('local_state_delayed', {
+        contextUri: playOptions.contextUri,
+        trackUri: playOptions.expectedUri,
+        action: 'state_sync_pending'
+      });
+    }
+    if (playOptions.repeatMode) {
+      await setPlaybackRepeatMode(playOptions.repeatMode);
+    }
     return true;
   }
 
   return false;
+}
+
+async function playContextUri(contextUri) {
+  if (!contextUri) {
+    return false;
+  }
+
+  return playSpotify({
+    body: {
+      context_uri: contextUri
+    },
+    contextUri,
+    repeatMode: 'off',
+    clearTrackListOnReject: true
+  });
 }
 
 async function playTrackFromCurrentContext(trackUri) {
@@ -1917,37 +2290,21 @@ async function playTrackFromCurrentContext(trackUri) {
 }
 
 async function playTrackInContext(contextUri, trackUri) {
-  const deviceId = state.deviceId;
-  if (!deviceId || !trackUri || !contextUri) {
+  if (!trackUri || !contextUri) {
     return playTrackUri(trackUri);
   }
 
-  const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
-  if (!tookOver) {
-    return false;
-  }
-
-  const body = JSON.stringify({
-    context_uri: contextUri,
-    offset: { uri: trackUri },
-    position_ms: 0
+  return playSpotify({
+    body: {
+      context_uri: contextUri,
+      offset: { uri: trackUri },
+      position_ms: 0
+    },
+    contextUri,
+    expectedUri: trackUri,
+    repeatMode: state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE ? 'context' : 'off',
+    fallbackAction: 'track_uri'
   });
-
-  const response = await spotifyWrite('/me/player/play?device_id=' + encodeURIComponent(deviceId), {
-    method: 'PUT',
-    body,
-    includeJsonContentType: true
-  });
-
-  if (response.ok) {
-    await refreshPlaybackState();
-    setPlayingState(true);
-    state.activePlaybackDeviceId = state.deviceId;
-    await setPlaybackRepeatMode(state.playbackListMode === PLAYBACK_LIST_MODES.SOURCE ? 'context' : 'off');
-    return true;
-  }
-
-  return false;
 }
 
 async function playTrackFromSavedRecord(record) {
@@ -2025,47 +2382,22 @@ async function playCurrentSourceTrackStep(delta) {
 }
 
 async function playTrackUri(trackUri) {
-  const deviceId = state.deviceId;
-  if (!deviceId || !trackUri) {
+  if (!trackUri) {
     return false;
   }
 
-  const tookOver = isLocalPlaybackActive() || await transferPlaybackToLocalDevice(true);
-  if (!tookOver) {
-    return false;
-  }
-
-  const body = JSON.stringify({
-    uris: [trackUri],
-    position_ms: 0
+  return playSpotify({
+    body: {
+      uris: [trackUri],
+      position_ms: 0
+    },
+    expectedUri: trackUri,
+    repeatMode: 'context'
   });
-
-  const response = await spotifyWrite('/me/player/play?device_id=' + encodeURIComponent(deviceId), {
-    method: 'PUT',
-    body,
-    includeJsonContentType: true
-  });
-
-  if (response.ok) {
-    await refreshPlaybackState();
-    setPlayingState(true);
-    state.activePlaybackDeviceId = state.deviceId;
-    await setPlaybackRepeatMode('context');
-    return true;
-  }
-
-  return false;
 }
 
 function normalizeTrack(track) {
-  const image = normalizeAlbumArt(track.album && track.album.images);
-  return {
-    uri: track.uri,
-    name: track.name,
-    image: image.url,
-    imageWidth: image.width,
-    imageHeight: image.height
-  };
+  return normalizeTrackLike(track);
 }
 
 function normalizeTileImage(images) {
@@ -2115,14 +2447,6 @@ function createFallbackImage(size) {
     url: GENRES_PLACEHOLDER,
     width: size,
     height: size
-  };
-}
-
-function tileToAlbumArtImage(tile) {
-  return {
-    url: tile.image || GENRES_PLACEHOLDER,
-    width: tile.imageWidth || ALBUM_ART_IMAGE_SIZE,
-    height: tile.imageHeight || ALBUM_ART_IMAGE_SIZE
   };
 }
 
@@ -2247,6 +2571,8 @@ async function spotifyWrite(path, options) {
 
 async function spotifyGet(path, options) {
   const allowResourceErrors = options && options.allowResourceErrors;
+  const suppressResourceStatus = options && options.suppressResourceStatus;
+  const onResourceError = options && options.onResourceError;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let response;
@@ -2269,7 +2595,17 @@ async function spotifyGet(path, options) {
     }
 
     if (allowResourceErrors && isNonFatalSpotifyStatus(response.status)) {
-      await handleNonFatalSpotifyResponse(response, 'This item is unavailable for the current Spotify account');
+      let detail = '';
+      if (onResourceError) {
+        detail = await readSpotifyErrorDetail(response);
+        onResourceError({
+          status: response.status,
+          detail
+        });
+      }
+      if (!suppressResourceStatus) {
+        await handleNonFatalSpotifyResponse(response, 'This item is unavailable for the current Spotify account');
+      }
       return null;
     }
 
