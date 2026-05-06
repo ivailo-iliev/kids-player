@@ -17,6 +17,9 @@ const SPOTIFY = {
   ]
 };
 
+const SPOTIFY_SCOPE_STORAGE_KEY = 'spotify_scope_signature';
+const SPOTIFY_SCOPE_SIGNATURE = SPOTIFY.scopes.slice().sort().join(' ');
+
 const CONNECTION_STATES = {
   INIT: 'init',
   AUTHORIZING: 'authorizing',
@@ -316,6 +319,14 @@ function setStorageItem(key, value) {
     localStorage.setItem(key, value);
   } catch (error) {
     throw new Error('Browser storage unavailable while writing ' + key + ' (' + describeError(error) + ')');
+  }
+}
+
+function removeStorageItem(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    throw new Error('Browser storage unavailable while removing ' + key + ' (' + describeError(error) + ')');
   }
 }
 
@@ -1879,9 +1890,9 @@ async function playContextUri(contextUri) {
     }
 
     if (isNonFatalSpotifyStatus(response.status)) {
+      await handleNonFatalSpotifyResponse(response, 'This item is unavailable for the current Spotify account');
       clearTrackList();
       setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
-      setStatusMessage('This item is unavailable for the current Spotify account');
       return false;
     }
 
@@ -2127,6 +2138,72 @@ function isNonFatalSpotifyStatus(status) {
   return status === 400 || status === 403 || status === 404;
 }
 
+function formatSpotifyErrorDetail(errorDetail) {
+  if (!errorDetail) {
+    return '';
+  }
+
+  if (typeof errorDetail === 'string') {
+    return errorDetail;
+  }
+
+  if (errorDetail.error && typeof errorDetail.error === 'object') {
+    return errorDetail.error.message || errorDetail.error.reason || JSON.stringify(errorDetail.error);
+  }
+
+  if (errorDetail.error_description) {
+    return errorDetail.error_description;
+  }
+
+  if (errorDetail.error) {
+    return String(errorDetail.error);
+  }
+
+  return JSON.stringify(errorDetail);
+}
+
+async function readSpotifyErrorDetail(response) {
+  let text = '';
+
+  try {
+    text = await response.clone().text();
+  } catch (error) {
+    return '';
+  }
+
+  if (!text) {
+    return '';
+  }
+
+  try {
+    return formatSpotifyErrorDetail(JSON.parse(text));
+  } catch (error) {
+    return text;
+  }
+}
+
+function isInsufficientScopeError(detail) {
+  return /insufficient.*scope|scope.*insufficient/i.test(detail || '');
+}
+
+async function handleNonFatalSpotifyResponse(response, fallbackMessage) {
+  const detail = await readSpotifyErrorDetail(response);
+  const message = detail || fallbackMessage;
+
+  if (detail) {
+    console.warn('Spotify API returned ' + response.status + ': ' + detail);
+  }
+
+  if (response.status === 403 && isInsufficientScopeError(detail)) {
+    clearStoredSpotifyTokens();
+    transitionConnection(CONNECTION_STATES.TOKEN_EXPIRED, 'Spotify permissions changed. Reauthorizing...');
+    await startAuthFlow();
+    return;
+  }
+
+  setStatusMessage(message);
+}
+
 async function spotifyWrite(path, options) {
   const method = options && options.method ? options.method : 'PUT';
   const body = options && options.body ? options.body : null;
@@ -2150,7 +2227,7 @@ async function spotifyWrite(path, options) {
     }
 
     if (isNonFatalSpotifyStatus(response.status)) {
-      setStatusMessage('This item is unavailable for the current Spotify account');
+      await handleNonFatalSpotifyResponse(response, 'This item is unavailable for the current Spotify account');
       return { ok: false };
     }
 
@@ -2192,6 +2269,7 @@ async function spotifyGet(path, options) {
     }
 
     if (allowResourceErrors && isNonFatalSpotifyStatus(response.status)) {
+      await handleNonFatalSpotifyResponse(response, 'This item is unavailable for the current Spotify account');
       return null;
     }
 
@@ -2409,12 +2487,28 @@ function saveTokens(tokenData) {
   setStorageItem('spotify_access_token', state.accessToken);
   setStorageItem('spotify_refresh_token', state.refreshToken || '');
   setStorageItem('spotify_expires_at', String(state.expiresAt));
+  setStorageItem(SPOTIFY_SCOPE_STORAGE_KEY, SPOTIFY_SCOPE_SIGNATURE);
 }
 
 function loadTokensFromStorage() {
   state.accessToken = getStorageItem('spotify_access_token');
   state.refreshToken = getStorageItem('spotify_refresh_token');
   state.expiresAt = Number(getStorageItem('spotify_expires_at') || 0);
+
+  if ((state.accessToken || state.refreshToken) && getStorageItem(SPOTIFY_SCOPE_STORAGE_KEY) !== SPOTIFY_SCOPE_SIGNATURE) {
+    clearStoredSpotifyTokens();
+  }
+}
+
+function clearStoredSpotifyTokens() {
+  state.accessToken = null;
+  state.refreshToken = null;
+  state.expiresAt = 0;
+
+  removeStorageItem('spotify_access_token');
+  removeStorageItem('spotify_refresh_token');
+  removeStorageItem('spotify_expires_at');
+  removeStorageItem(SPOTIFY_SCOPE_STORAGE_KEY);
 }
 
 function randomString(length) {
