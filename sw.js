@@ -1,9 +1,16 @@
-const CACHE_NAME = 'kids-player-v7';
+const CACHE_NAME = 'kids-player-v8';
 const IMAGE_CACHE_NAME = 'kids-player-images';
 const APP_SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/assets/icons/app-192.svg', '/assets/icons/app-512.svg'];
+const NETWORK_FIRST_PATHS = new Set(['/', '/index.html', '/styles.css', '/app.js', '/manifest.json']);
+
+function createReloadRequest(request) {
+  return new Request(request, { cache: 'reload' });
+}
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL.map((url) => createReloadRequest(url))))
+  );
   self.skipWaiting();
 });
 
@@ -20,13 +27,34 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-
 function getImageCacheKey(requestUrl, isSpotifyImage) {
   if (!isSpotifyImage) {
     return requestUrl.toString();
   }
 
   return requestUrl.origin + requestUrl.pathname;
+}
+
+function isNetworkFirstRequest(url) {
+  return url.origin === self.location.origin && NETWORK_FIRST_PATHS.has(url.pathname);
+}
+
+async function getNetworkFirstResponse(request) {
+  const cache = await caches.open(CACHE_NAME);
+
+  try {
+    const response = await fetch(createReloadRequest(request));
+    if (response && response.ok) {
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    const cached = await cache.match(request);
+    if (cached) {
+      return cached;
+    }
+    throw error;
+  }
 }
 
 self.addEventListener('fetch', (event) => {
@@ -38,7 +66,12 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.pathname.indexOf('/.netlify/functions/') === 0) {
-    event.respondWith(fetch(event.request));
+    event.respondWith(fetch(createReloadRequest(event.request)));
+    return;
+  }
+
+  if (isNetworkFirstRequest(url)) {
+    event.respondWith(getNetworkFirstResponse(event.request));
     return;
   }
 
