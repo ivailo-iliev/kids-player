@@ -26,8 +26,14 @@ Notes:
 
 - `netlify.toml` configures static publishing from the repo root.
 - Security headers are set for the Spotify Web Playback SDK and API calls.
-- `/sw.js`, `/index.html`, and `/manifest.json` are marked for revalidation so clients pick up updates reliably.
+- `/sw.js`, `/index.html`, `/app.js`, `/styles.css`, and `/manifest.json` are marked for revalidation so clients pick up updates reliably.
 - A catch-all redirect sends unknown routes to `/index.html`, which keeps the app safe if you later add client-side routes.
+
+## PWA updates on Safari
+
+The service worker checks for updates when the app starts, every five minutes, and whenever the installed PWA becomes visible again. When Safari activates an updated service worker, the app reloads once so the latest HTML, CSS, and JavaScript are requested while `localStorage` stays intact.
+
+The service worker uses a network-first strategy for the app shell (`/`, `/index.html`, `/styles.css`, `/app.js`, and `/manifest.json`), so normal reloads after a deploy do not require uninstalling the PWA or clearing saved Spotify/session data.
 
 ## Behavior
 

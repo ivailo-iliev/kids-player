@@ -90,6 +90,7 @@ const ALBUM_ART_IMAGE_SIZE = 160;
 const TRACK_THUMBNAIL_SIZE = 40;
 const MAX_RENDERED_TRACKS = 40;
 const PREVIOUS_TRACK_STORAGE_KEY = 'previous_track';
+const SERVICE_WORKER_UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const TAKEOVER_CONFIRMATION_TIMEOUT_MS = 5000;
 const TAKEOVER_CONFIRMATION_POLL_MS = 250;
 const PLAYBACK_LIST_MODES = {
@@ -334,12 +335,42 @@ function setStartupStep(step) {
   state.startupStep = step;
 }
 
+function registerServiceWorkerForUpdates() {
+  if (!('serviceWorker' in navigator)) {
+    return;
+  }
+
+  let isReloadingForUpdate = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (isReloadingForUpdate) {
+      return;
+    }
+
+    isReloadingForUpdate = true;
+    window.location.reload();
+  });
+
+  navigator.serviceWorker
+    .register('/sw.js', { updateViaCache: 'none' })
+    .then((registration) => {
+      function checkForServiceWorkerUpdate() {
+        registration.update().catch((error) => console.warn('Service worker update check failed', error));
+      }
+
+      checkForServiceWorkerUpdate();
+      window.setInterval(checkForServiceWorkerUpdate, SERVICE_WORKER_UPDATE_CHECK_INTERVAL_MS);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          checkForServiceWorkerUpdate();
+        }
+      });
+    })
+    .catch((error) => console.warn('Service worker registration failed', error));
+}
+
 async function init() {
   installGlobalErrorHandlers();
-
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
-  }
+  registerServiceWorkerForUpdates();
 
   bindUiEvents();
   setAlbumArtImage(createFallbackImage(ALBUM_ART_IMAGE_SIZE));
